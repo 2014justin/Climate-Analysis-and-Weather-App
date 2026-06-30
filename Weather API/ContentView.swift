@@ -197,6 +197,12 @@ struct WeatherCommands: Commands {
             .keyboardShortcut("4", modifiers: .command)
             .disabled(selectHistoryDuration == nil)
             
+            Button("History: 120 Hours") {
+                selectHistoryDuration?(.oneTwentyHours)
+            }
+            .keyboardShortcut("5", modifiers: .command)
+            .disabled(selectHistoryDuration == nil)
+            
             Divider()
             
             ///Heat index + Dew point graph toggle keyboard shortcut
@@ -300,6 +306,7 @@ enum HistoryDuration: Int, CaseIterable, Identifiable {
     case fortyEightHours = 48
     case seventyTwoHours = 72
     case ninetySixHours = 96
+    case oneTwentyHours = 120
     
     var id: Int {
         return rawValue
