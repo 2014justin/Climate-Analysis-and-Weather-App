@@ -42,6 +42,14 @@ struct ShowClimateGraphActionKey: FocusedValueKey {
 struct SelectLocationActionKey: FocusedValueKey {
     typealias Value = (WeatherLocation) -> Void
 }
+///Graph value toggle shortcuts. Cmd + Shift + D for dew point. Cmd + Shift + H for heat index
+struct ToggleDewPointActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct ToggleHeatIndexActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
 extension FocusedValues {
     var refreshWeather: (() -> Void)? {
         get {
@@ -110,6 +118,26 @@ extension FocusedValues {
             self[SelectLocationActionKey.self] = newValue
         }
     }
+    ///Dew point + heat index graph toggler
+    var toggleDewPoint: (() -> Void)? {
+        get {
+            self[ToggleDewPointActionKey.self]
+        }
+        
+        set {
+            self[ToggleDewPointActionKey.self] = newValue
+        }
+    }
+    
+    var toggleHeatIndex: (() -> Void)? {
+        get {
+            self[ToggleHeatIndexActionKey.self]
+        }
+        
+        set {
+            self[ToggleHeatIndexActionKey.self] = newValue
+        }
+    }
 }
 
 struct WeatherCommands: Commands {
@@ -119,6 +147,8 @@ struct WeatherCommands: Commands {
     @FocusedValue(\.showForecastDiscussion) private var showForecastDiscussion
     @FocusedValue(\.showClimateGraph) private var showClimateGraph
     @FocusedValue(\.selectLocation) private var selectLocation
+    @FocusedValue(\.toggleDewPoint) private var toggleDewPoint
+    @FocusedValue(\.toggleHeatIndex) private var toggleHeatIndex
     var body: some Commands {
         CommandGroup(after: .newItem) {
             Button("Refresh Weather") {
@@ -168,6 +198,22 @@ struct WeatherCommands: Commands {
             .disabled(selectHistoryDuration == nil)
             
             Divider()
+            
+            ///Heat index + Dew point graph toggle keyboard shortcut
+            
+            Button("Toggle Dew Point") {
+                toggleDewPoint?()
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(toggleDewPoint == nil)
+
+            Button("Toggle Heat Index") {
+                toggleHeatIndex?()
+            }
+            .keyboardShortcut("h", modifiers: [.command, .shift])
+            .disabled(toggleHeatIndex == nil)
+            Divider()
+            
             ///Adds the station selector
             ///North las vegas
             Button("Location: North Las Vegas, NV") {
@@ -342,6 +388,9 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var temperatureHistory: [TemperaturePoint] = [] /// Start this array empty but grow & shrink as needed.
     @State private var temperatureForecast: [TemperaturePoint] = [] /// It will change in size depending on selected duration (24, 48, or 72 hours).
+    @State private var selectedTemperaturePoint: TemperaturePoint? = nil ///Holds the point currently under the mouse
+    @State private var isShowingDewPoint = false
+    @State private var isShowingHeatIndex = false
     @State private var selectedHistoryDuration = HistoryDuration.twentyFourHours
     @State private var forecastDiscussion: ForecastDiscussion?
     @State private var isShowingForecastDiscussion = false
@@ -460,7 +509,7 @@ struct ContentView: View {
 
             Divider()
 
-            HStack(alignment: .top, spacing: 18) {
+            HStack(alignment: .top, spacing: 8) {
                 leftDashboardPanel
                 /// Put the live numerical data on the left and the temperature chart on the right
                 temperatureChart
@@ -529,7 +578,7 @@ struct ContentView: View {
                 .frame(width: 95, alignment: .trailing)
             
             Text(unit)
-                .frame(width: 135, alignment: .leading)
+                .frame(width: 100, alignment: .leading)
         }
     }
     
@@ -686,6 +735,34 @@ struct ContentView: View {
                 )
                 .foregroundStyle(.blue)
             }
+            /// If shows dew point, show the graph.
+            if isShowingDewPoint {
+                ForEach(temperatureHistory) { point in
+                    if let dewPointFahrenheit = point.dewPointFahrenheit {
+                        LineMark(
+                            x: .value("Time", point.timestamp),
+                            y: .value("Dew Point", dewPointFahrenheit),
+                            series: .value("Series", "Dew Point")
+                        )
+                        .foregroundStyle(.black)
+                        .lineStyle(StrokeStyle(lineWidth: 2.0))
+                    }
+                }
+            }
+            ///If dew point exists, then automatically heat index exists.
+            if isShowingHeatIndex {
+                ForEach(temperatureHistory) { point in
+                    if let heatIndexFahrenheit = point.heatIndexFahrenheit {
+                        LineMark(
+                            x: .value("Time", point.timestamp),
+                            y: .value("Heat Index", heatIndexFahrenheit),
+                            series: .value("Series", "Heat Index")
+                        )
+                        .foregroundStyle(.purple)
+                        .lineStyle(StrokeStyle(lineWidth: 2.0))
+                    }
+                }
+            }
 
             ForEach(temperatureForecast) { point in /// this does the same thing but for integrating forwards in time.
                 LineMark(
@@ -693,8 +770,36 @@ struct ContentView: View {
                     y: .value("Temperature", point.temperatureFahrenheit),
                     series: .value("Series", "Forecast")
                 )
-                .foregroundStyle(.purple) /// purple to make it obviously stand out to weather that has already happened.
+                .foregroundStyle(.cyan.opacity(0.75)) /// light blue & dashed to make it obviously stand out to weather that has already happened.
                 .lineStyle(StrokeStyle(lineWidth: 2.5, dash: [7, 4]))
+            }
+            /// Forecast dew points as grey dashed line
+            if isShowingDewPoint {
+                ForEach(temperatureForecast) { point in
+                    if let dewPointFahrenheit = point.dewPointFahrenheit {
+                        LineMark(
+                            x: .value("Time", point.timestamp),
+                            y: .value("Forecast Dew Point", dewPointFahrenheit),
+                            series: .value("Series", "Forecast Dew Point")
+                        )
+                        .foregroundStyle(.gray)
+                        .lineStyle(StrokeStyle(lineWidth: 2.0, dash: [7,4]))
+                    }
+                }
+            }
+            ///Forecast dew points pink dashed.
+            if isShowingHeatIndex {
+                ForEach(temperatureForecast) { point in
+                    if let heatIndexFahrenheit = point.heatIndexFahrenheit {
+                        LineMark(
+                            x: .value("Time", point.timestamp),
+                            y: .value("Forecast Heat Index", heatIndexFahrenheit),
+                            series: .value("Series", "Forecast Heat Index")
+                        )
+                        .foregroundStyle(.purple.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 2.0, dash: [7, 4]))
+                    }
+                }
             }
 
             ForEach(dailyTemperatureHighlights) { point in
@@ -708,8 +813,61 @@ struct ContentView: View {
                     Text("\(Int(point.temperatureFahrenheit.rounded()))")
                 }
             }
+            
+            if let selectedTemperaturePoint {
+                PointMark(
+                    x: .value("Selected Time", selectedTemperaturePoint.timestamp),
+                    y: .value("Selected Temperature", selectedTemperaturePoint.temperatureFahrenheit)
+                )
+                .foregroundStyle(.blue)
+                .symbolSize(80)
+                .annotation(position: .top) {
+                    chartHoverTooltip(
+                        label: "Temperature",
+                        value: selectedTemperaturePoint.temperatureFahrenheit,
+                        timestamp: selectedTemperaturePoint.timestamp,
+                        color: .blue
+                    )
+                }
+                ///Adds a nice solid black dot over dew points
+                if isShowingDewPoint,
+                   let dewPointFahrenheit = selectedTemperaturePoint.dewPointFahrenheit {
+                    PointMark(
+                        x: .value("Selected Dew Point Time", selectedTemperaturePoint.timestamp),
+                        y: .value("Selected Dew Point", dewPointFahrenheit)
+                    )
+                    .foregroundStyle(.black)
+                    .symbolSize(80)
+                    .annotation(position: .top) {
+                        chartHoverTooltip(
+                            label: "Dew Point",
+                            value: dewPointFahrenheit,
+                            timestamp: nil,
+                            color: .black
+                        )
+                    }
+                }
+                ///Hover table for heat index
+                if isShowingHeatIndex,
+                   let heatIndexFahrenheit = selectedTemperaturePoint.heatIndexFahrenheit {
+                    PointMark(
+                        x: .value("Selected Heat Index Time", selectedTemperaturePoint.timestamp),
+                        y: .value("Selected Heat Index", heatIndexFahrenheit)
+                    )
+                    .foregroundStyle(.pink)
+                    .symbolSize(80)
+                    .annotation(position: .bottom) {
+                        chartHoverTooltip(
+                            label: "Heat Index",
+                            value: heatIndexFahrenheit,
+                            timestamp: nil,
+                            color: .pink
+                        )
+                    }
+                }
+            }
         }
-        .frame(width: 760, height: 350)
+        .frame(width: 860, height: 350)
         .foregroundStyle(.black)
         .padding(16)
         .padding(.top, 28)
@@ -728,37 +886,9 @@ struct ContentView: View {
                 .padding(.leading, 16)
                 .padding(.top, 14)
         }
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 6) {
-                Text("History")
-                    .font(.caption)
-                    .foregroundStyle(.black)
-                
-                Picker("History Duration", selection: $selectedHistoryDuration) {
-                    ForEach(HistoryDuration.allCases) { duration in
-                        Text(duration.label)
-                            .tag(duration)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .environment(\.colorScheme, .light)
-                .tint(.blue)
-                .foregroundStyle(.black)
-                .frame(width: 110)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(.gray.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(.gray.opacity(0.35), lineWidth: 1)
-            }
-            .padding(.top, 8)
-            .padding(.trailing, 12)
-        }
+        
         .chartYScale(domain: chartTemperatureDomain)
+        .chartXScale(domain: chartTimeDomain)
         .chartYAxis {
             AxisMarks(values: .stride(by: 5)) {
                 AxisGridLine()
@@ -802,7 +932,112 @@ struct ContentView: View {
                 }
             }
         }
+        ///Creates an invisible rectangle over the clart. When your mouse moves over it: Swift gets the mouse location, we convert the x-position into a date,
+        ///we search all temperature chart points, then we store the closest point in selected temperature point.
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                let plotFrame = geometry[proxy.plotAreaFrame]
+                
+                Rectangle()
+                    .fill(.clear)
+                    .frame(width: plotFrame.width, height: plotFrame.height)
+                    .position(x: plotFrame.midX, y: plotFrame.midY)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            let xPosition = location.x - plotFrame.origin.x
+                            
+                            guard xPosition >= 0,
+                                  xPosition <= plotFrame.width,
+                                  let hoveredDate: Date = proxy.value(atX: xPosition) else {
+                                selectedTemperaturePoint = nil
+                                return
+                            }
+                            
+                            selectedTemperaturePoint = allTemperatureChartPoints.min { first,second in
+                                abs(first.timestamp.timeIntervalSince(hoveredDate)) <
+                                    abs(second.timestamp.timeIntervalSince(hoveredDate))
+                            }
+                            
+                        case .ended:
+                            selectedTemperaturePoint = nil
+                        }
+                    }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 6) {
+                Menu {
+                    Label("Temperature", systemImage: "checkmark")
+                        .disabled(true)
+                    
+                    Toggle("Dew Point", isOn: $isShowingDewPoint)
+                    Toggle("Heat Index", isOn: $isShowingHeatIndex)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Meteorological Values")
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.black)
+                }
+                Text("History")
+                    .font(.caption)
+                    .foregroundStyle(.black)
+                
+                Picker("History Duration", selection: $selectedHistoryDuration) {
+                    ForEach(HistoryDuration.allCases) { duration in
+                        Text(duration.label)
+                            .tag(duration)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .environment(\.colorScheme, .light)
+                .tint(.blue)
+                .foregroundStyle(.black)
+                .frame(width: 110)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(.gray.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(.gray.opacity(0.35), lineWidth: 1)
+            }
+            .padding(.top, 8)
+            .padding(.trailing, 12)
+        }
     }
+    ///Displays temperature neatly as a point floating above the graph. Does it for air temp, dew point, and heat index.
+    private func chartHoverTooltip(
+        label: String,
+        value: Double,
+        timestamp: Date? = nil,
+        color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let timestamp {
+                Text(timestamp.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Text("\(label): \(String(format: "%.1f", value)) °F")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(color)
+        }
+        .padding(6)
+        .background(.white.opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .shadow(radius: 3)
+    }
+    
+    ///Daytime = day color gradient. Sunrise/set = sunset color gradient. Night = starry night background.
     var body: some View {
         ZStack {
             LinearGradient(
@@ -814,13 +1049,13 @@ struct ContentView: View {
             if daylightPhase == .night {
                 starOverlay
             }
-            
+            ///Adjust APp default window size here
             dashboardView
                 .padding()
                 .frame(
                     minWidth: 1210,
                     maxWidth: .infinity,
-                    minHeight: 510,
+                    minHeight: 550,
                     maxHeight: .infinity,
                     alignment: .topLeading
                 )
@@ -862,6 +1097,16 @@ struct ContentView: View {
                 selectedClimateGraph = .annualTemperatureCurve
                 activeClimateGraph = .annualTemperatureCurve
             }
+        
+            ///Heat index + Dew point graph toggle shortcut
+            .focusedSceneValue(\.toggleDewPoint) {
+                isShowingDewPoint.toggle()
+            }
+
+            .focusedSceneValue(\.toggleHeatIndex) {
+                isShowingHeatIndex.toggle()
+            }
+        
             ///When the menu command sends a location: selectLocation?(.fairbanks) this block receives it as
             ///location. Then it changes selectedLocation, and immediately refreshes weather for the new location
             .focusedSceneValue(\.selectLocation) { location in
@@ -882,16 +1127,27 @@ struct ContentView: View {
                 )
             }
     }
+    private var allTemperatureChartPoints: [TemperaturePoint] {
+        let combinedPoints = temperatureHistory + temperatureForecast
+        
+        return combinedPoints
+            .filter {chartTimeDomain.contains($0.timestamp) }
+            .sorted { $0.timestamp < $1.timestamp}
+    }
     private var chartXAxisHourStride: Int {
-        switch selectedHistoryDuration {
-        case .twentyFourHours:
+        let hours = selectedHistoryDuration.rawValue
+        
+        switch hours {
+        case ...24:
             return 6
-        case .fortyEightHours:
+        case ...48:
             return 12
-        case .seventyTwoHours:
+        case ...96:
             return 24
-        case .ninetySixHours:
-            return 32
+        case ...168:
+            return 48
+        default:
+            return 72
         }
     }
     ///Fixes formatting for x axis depending on hours.
@@ -904,8 +1160,16 @@ struct ContentView: View {
         return start...end
     }
     private var chartTemperatureDomain: ClosedRange<Double> {
-        let visibleTemperatures = (temperatureHistory + temperatureForecast).map {
+        var visibleTemperatures = (temperatureHistory + temperatureForecast).map {
             $0.temperatureFahrenheit
+        }
+        /// Considers dew point when drawing the y-axis tickmarks/range
+        if isShowingDewPoint {
+            let visibleDewPoints = (temperatureHistory + temperatureForecast).compactMap {
+                $0.dewPointFahrenheit
+            }
+            
+            visibleTemperatures.append(contentsOf: visibleDewPoints)
         }
         
         guard let minimum = visibleTemperatures.min(),
@@ -1169,17 +1433,38 @@ struct ContentView: View {
             let cutoffDate = Date().addingTimeInterval( -Double(selectedHistoryDuration.rawValue) * 60.0 * 60.0
             )
             
-            temperatureHistory = response.features.compactMap { feature in
+            temperatureHistory = response.features.compactMap { feature -> TemperaturePoint? in
                 guard feature.properties.timestamp >= cutoffDate,
                       let temperatureCelsius = feature.properties.temperature.value else {
                     return nil
                 }
                 
+                let temperatureFahrenheit = WeatherMath.celsiusToFahrenheit(temperatureCelsius)
+
+                let dewPointFahrenheit: Double?
+
+                if let dewPointCelsius = feature.properties.dewpoint.value {
+                    dewPointFahrenheit = WeatherMath.celsiusToFahrenheit(dewPointCelsius)
+                } else {
+                    dewPointFahrenheit = nil
+                }
+
+                let heatIndexFahrenheit: Double?
+
+                if let relativeHumidity = feature.properties.relativeHumidity.value {
+                    heatIndexFahrenheit = WeatherMath.heatIndexFahrenheit(
+                        temperature: temperatureFahrenheit,
+                        relativeHumidity: relativeHumidity
+                    )
+                } else {
+                    heatIndexFahrenheit = nil
+                }
+
                 return TemperaturePoint(
                     timestamp: feature.properties.timestamp,
-                    temperatureFahrenheit: WeatherMath.celsiusToFahrenheit(
-                        temperatureCelsius
-                    )
+                    temperatureFahrenheit: temperatureFahrenheit,
+                    dewPointFahrenheit: dewPointFahrenheit,
+                    heatIndexFahrenheit: heatIndexFahrenheit
                 )
             }
             
@@ -1194,10 +1479,31 @@ struct ContentView: View {
                 guard period.startTime <= forecastEndDate else {
                     return nil
                 }
+                ///Dew point might return nil due to station error
+                let forecastDewPointFahrenheit: Double?
+
+                if let dewPointCelsius = period.dewpoint?.value {
+                    forecastDewPointFahrenheit = WeatherMath.celsiusToFahrenheit(dewPointCelsius)
+                } else {
+                    forecastDewPointFahrenheit = nil
+                }
                 
+                let forecastHeatIndexFahrenheit: Double?
+                
+                if let relativeHumidity = period.relativeHumidity?.value {
+                    forecastHeatIndexFahrenheit = WeatherMath.heatIndexFahrenheit(
+                        temperature: period.temperature,
+                        relativeHumidity: relativeHumidity
+                    )
+                } else {
+                    forecastHeatIndexFahrenheit = nil
+                }
+
                 return TemperaturePoint(
                     timestamp: period.startTime,
-                    temperatureFahrenheit: period.temperature
+                    temperatureFahrenheit: period.temperature,
+                    dewPointFahrenheit: forecastDewPointFahrenheit,
+                    heatIndexFahrenheit: forecastHeatIndexFahrenheit
                 )
             }
             

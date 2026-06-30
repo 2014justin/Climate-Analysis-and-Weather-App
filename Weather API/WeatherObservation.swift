@@ -44,6 +44,8 @@ struct NWSMeasurement: Decodable {
 struct TemperaturePoint: Identifiable {
     let timestamp: Date
     let temperatureFahrenheit: Double
+    let dewPointFahrenheit: Double?
+    let heatIndexFahrenheit: Double?
     
     var id: Date {
         return timestamp
@@ -72,6 +74,8 @@ struct NWSForecastPeriod: Decodable {
     let temperatureUnit: String
     let windSpeed: String
     let shortForecast: String
+    let dewpoint: NWSMeasurement?
+    let relativeHumidity: NWSMeasurement?
 }
 
 
