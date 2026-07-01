@@ -344,6 +344,7 @@ struct ClimateDayPoint: Identifiable {
     let dayOfYear: Int
     let normalHigh: Double
     let normalLow: Double
+    let solarEnergy: Double
     let normalizedSolar: Double
 }
 ///Add eigendate chord logic
@@ -363,7 +364,45 @@ struct ThermalWindow {
     let endDay: Int
     let durationDays: Int
 }
-
+/// Chart Hover Overlay generalized function we can use anywhere.
+struct ChartHoverOverlay: View {
+    let proxy: ChartProxy
+    let onHover: (CGPoint) -> Void
+    let onEnded: () -> Void
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let plotFrame = geometry[proxy.plotAreaFrame]
+            
+            Rectangle()
+                .fill(.clear)
+                .frame(width: plotFrame.width, height: plotFrame.height)
+                .position(x: plotFrame.midX, y: plotFrame.midY)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        let xPosition = location.x - plotFrame.origin.x
+                        let yPosition = location.y - plotFrame.origin.y
+                        
+                        guard xPosition >= 0,
+                              xPosition <= plotFrame.width,
+                              yPosition >= 0,
+                              yPosition <= plotFrame.height else {
+                            onEnded()
+                            return
+                        }
+                        
+                        onHover(CGPoint(x: xPosition, y: yPosition))
+                        
+                    case .ended:
+                        onEnded()
+                    }
+                }
+            
+        }
+    }
+}
 ///Add background stars to the app at nighttime. This depends on station.
 struct BackgroundStar: Identifiable {
     let id = UUID()
@@ -461,21 +500,25 @@ struct ContentView: View {
             ]
         }
     }
-    /// Adds stars
+    /// Adds stars or starry background
+    /// Can 
     private let backgroundStars: [BackgroundStar] = [
-        BackgroundStar(x: 0.18, y: 0.12, size: 1.4, opacity: 0.40),
-        BackgroundStar(x: 0.16, y: 0.28, size: 1.0, opacity: 0.32),
-        BackgroundStar(x: 0.14, y: 0.18, size: 1.8, opacity: 0.39),
-        BackgroundStar(x: 0.28, y: 0.10, size: 1.2, opacity: 0.43),
-        BackgroundStar(x: 0.78, y: 0.24, size: 1.6, opacity: 0.36),
-        BackgroundStar(x: 0.42, y: 0.14, size: 1.1, opacity: 0.45),
-        BackgroundStar(x: 0.22, y: 0.30, size: 1.9, opacity: 0.32),
-        BackgroundStar(x: 0.76, y: 0.16, size: 1.2, opacity: 0.45),
-        BackgroundStar(x: 0.53, y: 0.34, size: 1.7, opacity: 0.39),
-        BackgroundStar(x: 0.52, y: 0.58, size: 2.2, opacity: 0.45),
-        BackgroundStar(x: 0.92, y: 0.88, size: 1.4, opacity: 0.25),
-        BackgroundStar(x: 0.66, y: 0.66, size: 2.0, opacity: 0.45),
-        BackgroundStar(x: 0.79, y: 0.92, size: 1.3, opacity: 0.28)
+        BackgroundStar(x: 0.78, y: 0.12, size: 2.4, opacity: 0.70),
+        BackgroundStar(x: 0.86, y: 0.28, size: 3.0, opacity: 0.72),
+        BackgroundStar(x: 0.14, y: 0.18, size: 1.8, opacity: 0.90),
+        BackgroundStar(x: 0.28, y: 0.10, size: 2.2, opacity: 0.83),
+        BackgroundStar(x: 0.78, y: 0.24, size: 1.6, opacity: 0.76),
+        BackgroundStar(x: 0.42, y: 0.74, size: 2.1, opacity: 0.75),
+        BackgroundStar(x: 0.22, y: 0.60, size: 2.9, opacity: 0.72),
+        BackgroundStar(x: 0.76, y: 0.86, size: 3.2, opacity: 0.75),
+        BackgroundStar(x: 0.53, y: 0.74, size: 1.7, opacity: 0.89),
+        BackgroundStar(x: 0.52, y: 0.85, size: 2.2, opacity: 0.75),
+        BackgroundStar(x: 0.92, y: 0.88, size: 2.4, opacity: 0.85),
+        BackgroundStar(x: 0.66, y: 0.76, size: 2.0, opacity: 0.85),
+        BackgroundStar(x: 0.79, y: 0.92, size: 3.3, opacity: 0.88),
+        BackgroundStar(x: 0.57, y: 0.93, size: 4.0, opacity: 0.79),
+        BackgroundStar(x: 0.39, y: 0.92, size: 3.3, opacity: 0.88),
+        BackgroundStar(x: 0.17, y: 0.93, size: 4.0, opacity: 0.79)
     ]
     
     private var starOverlay: some View {
@@ -942,36 +985,23 @@ struct ContentView: View {
         ///Creates an invisible rectangle over the clart. When your mouse moves over it: Swift gets the mouse location, we convert the x-position into a date,
         ///we search all temperature chart points, then we store the closest point in selected temperature point.
         .chartOverlay { proxy in
-            GeometryReader { geometry in
-                let plotFrame = geometry[proxy.plotAreaFrame]
-                
-                Rectangle()
-                    .fill(.clear)
-                    .frame(width: plotFrame.width, height: plotFrame.height)
-                    .position(x: plotFrame.midX, y: plotFrame.midY)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            let xPosition = location.x - plotFrame.origin.x
-                            
-                            guard xPosition >= 0,
-                                  xPosition <= plotFrame.width,
-                                  let hoveredDate: Date = proxy.value(atX: xPosition) else {
-                                selectedTemperaturePoint = nil
-                                return
-                            }
-                            
-                            selectedTemperaturePoint = allTemperatureChartPoints.min { first,second in
-                                abs(first.timestamp.timeIntervalSince(hoveredDate)) <
-                                    abs(second.timestamp.timeIntervalSince(hoveredDate))
-                            }
-                            
-                        case .ended:
-                            selectedTemperaturePoint = nil
-                        }
+            ChartHoverOverlay(
+                proxy: proxy,
+                onHover: { plotLocation in
+                    guard let hoveredDate: Date = proxy.value(atX: plotLocation.x) else {
+                        selectedTemperaturePoint = nil
+                        return
                     }
-            }
+                    
+                    selectedTemperaturePoint = allTemperatureChartPoints.min { first, second in
+                        abs(first.timestamp.timeIntervalSince(hoveredDate)) <
+                            abs(second.timestamp.timeIntervalSince(hoveredDate))
+                    }
+                },
+                onEnded: {
+                    selectedTemperaturePoint = nil
+                }
+            )
         }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 6) {
@@ -1593,6 +1623,7 @@ struct ClimateGraphView: View {
     @Binding var graphType: ClimateGraphType
     let location: WeatherLocation
     @State private var keyMonitor: Any?
+    @State private var selectedClimatePoint: ClimateDayPoint?
     /// Add forwards and backward buttons to the climate graph.
     /// Adds a current graph index. So annual temp curve would be index 0.
     private var currentGraphIndex: Int {
@@ -1634,6 +1665,10 @@ struct ClimateGraphView: View {
                     profile: location.climatologyProfile
                 ),
                 normalLow: WeatherAlmanac.normalLowFahrenheit(
+                    dayOfYear: day,
+                    profile: location.climatologyProfile
+                ),
+                solarEnergy: WeatherAlmanac.solarEnergy(
                     dayOfYear: day,
                     profile: location.climatologyProfile
                 ),
@@ -1742,6 +1777,54 @@ struct ClimateGraphView: View {
         
         return lowerBound...upperBound
     }
+
+    
+    ///Hysteresis point function
+    ///The moust is hovering near some point on the hysteresis graph. Which actual calendar day on our
+    ///climate loop is closest to that moust position??
+    ///Which day's (s, T-min) point is geometrically closest to the cursor??
+    ///So we have to use pythagorean distance
+    private func hysteresisPoint(
+        closestToNormalizedSolar hoveredSolar: Double,
+        normalLow hoveredNormalLow: Double
+    ) -> ClimateDayPoint? {
+        let xRange = 1.2
+        let yRange = hysteresisTemperatureDomain.upperBound - hysteresisTemperatureDomain.lowerBound
+        
+        guard yRange > 0 else {
+            return nil
+        }
+        
+        return climatePoints.min { first, second in
+            ///Calculate how hoveredSolar differs from normalized solar, and normalize or divide by the xRange
+            let firstSolarDistance = (first.normalizedSolar - hoveredSolar) / xRange
+            let firstTemperatureDistance = (first.normalLow - hoveredNormalLow) / yRange
+            
+            let secondSolarDistance = (second.normalizedSolar - hoveredSolar) / xRange
+            let secondTemperatureDistance = (second.normalLow - hoveredNormalLow) / yRange
+            ///Normalizing by chart range is necessary because s(t) goes from 0 to 1, while temperature might
+            ///have an amplitude of 50 degrees or morel.
+            ///Almost like a metric tensor square. g uu, or g vv.
+            ///We do not need the square root because if a^2 is less than b^2 then a is less than b.
+            let firstDistanceSquared =
+                firstSolarDistance * firstSolarDistance + firstTemperatureDistance * firstTemperatureDistance
+            
+            let secondDistanceSquared =
+                secondSolarDistance * secondSolarDistance + secondTemperatureDistance * secondTemperatureDistance
+            return firstDistanceSquared < secondDistanceSquared
+        }
+    }
+    ///Climate points parser/indexer
+    private func climatePoint(for dayOfYear: Int) -> ClimateDayPoint? {
+        guard (1...365).contains(dayOfYear) else {
+            return nil
+        }
+        
+        return climatePoints.first { point in
+            point.dayOfYear == dayOfYear
+        }
+    }
+    ///Define hover rectangle function so we can define it once and use it on any graph without having
     ///Calculate the seasonal memory index defined as the integral from 1 to 365 of T min(t) ds
 
     private var seasonalMemoryIndex: Double {
@@ -2052,6 +2135,7 @@ struct ClimateGraphView: View {
     /// under our climate UI.
     private var annualTemperatureChart: some View {
         Chart {
+            ///Adds T max (red) but cursor-able
             ForEach(climatePoints) { point in
                 LineMark(
                     x: .value("Day", point.dayOfYear),
@@ -2060,7 +2144,7 @@ struct ClimateGraphView: View {
                 )
                 .foregroundStyle(.red)
             }
-
+            ///Adds T min (blue) but cursor-able
             ForEach(climatePoints) { point in
                 LineMark(
                     x: .value("Day", point.dayOfYear),
@@ -2069,7 +2153,50 @@ struct ClimateGraphView: View {
                 )
                 .foregroundStyle(.blue)
             }
-            
+            if let selectedClimatePoint {
+                RuleMark(
+                    x: .value("Selected Day", selectedClimatePoint.dayOfYear)
+                )
+                .foregroundStyle(.white.opacity(0.45))
+                
+                PointMark(
+                    x: .value("Selected High Day", selectedClimatePoint.dayOfYear),
+                    y: .value("Selected High", selectedClimatePoint.normalHigh)
+                )
+                .foregroundStyle(.red)
+                .symbolSize(70)
+                
+                PointMark(
+                    x: .value("Selected Low Day", selectedClimatePoint.dayOfYear),
+                    y: .value("Selected Low", selectedClimatePoint.normalLow)
+                )
+                .foregroundStyle(.blue)
+                .symbolSize(70)
+                .annotation(
+                    position: selectedClimatePoint.dayOfYear >= 310 ? .leading : .trailing,
+                    alignment: .center
+                ) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(monthDayLabel(for: selectedClimatePoint.dayOfYear))
+                            .font(.headline)
+                        
+                        Text("Day \(selectedClimatePoint.dayOfYear)")
+                            .foregroundStyle(.secondary)
+                        
+                        Divider()
+                        
+                        Text("Normal High: \(selectedClimatePoint.normalHigh, specifier: "%.1f") °F")
+                        Text("Normal Low: \(selectedClimatePoint.normalLow, specifier: "%.1f") °F")
+                        Text("Solar: \(selectedClimatePoint.solarEnergy, specifier: "%.2f") kWh/m²/day")
+                        Text("s(t): \(selectedClimatePoint.normalizedSolar, specifier: "%.3f")")
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.72))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
             ///Thermal midwinter & thermal midsommar
             if let peakNormalLowPoint,
                let thermalMidsommarWindow,
@@ -2104,6 +2231,25 @@ struct ClimateGraphView: View {
         }
         .chartXScale(domain: 1...365)
         .chartYScale(domain: annualTemperatureDomain)
+        ///Add the cursor hover logic. Renders an invisible rectangle. Calls our complicated hover function from earlier
+        ///but do not have to build it here so it saves space.
+        .chartOverlay { proxy in
+            ChartHoverOverlay(
+                proxy: proxy,
+                onHover: { plotLocation in
+                    guard let hoveredDay = proxy.value(atX: plotLocation.x, as: Int.self) else {
+                        selectedClimatePoint = nil
+                        return
+                    }
+                    
+                    selectedClimatePoint = climatePoint(for: hoveredDay)
+                    
+                },
+                onEnded: {
+                    selectedClimatePoint = nil
+                }
+            )
+        }
         /// Now have it label Jan 1 ... Dec 1, Dec 31
         .chartXAxis {
             AxisMarks(values: [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 365]) { value in
@@ -2160,6 +2306,38 @@ struct ClimateGraphView: View {
                     y: .value("Normal Low", point.normalLow)
                 )
                 .foregroundStyle(.purple)
+            }
+            
+            if let selectedClimatePoint {
+                PointMark(
+                    x: .value("Selected Normalized Solar", selectedClimatePoint.normalizedSolar),
+                    y: .value("Selected Normal Low", selectedClimatePoint.normalLow)
+                )
+                .foregroundStyle(.orange)
+                .symbolSize(90)
+                .annotation(
+                    position: selectedClimatePoint.normalizedSolar >= 0.65 ? .leading : .trailing,
+                    alignment: .center
+                ) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(monthDayLabel(for: selectedClimatePoint.dayOfYear))
+                            .font(.headline)
+                        Text("Day \(selectedClimatePoint.dayOfYear)")
+                            .foregroundStyle(.secondary)
+                        
+                        Divider()
+                        ///Will display the big four: T min, T max, S(t) and s(t)
+                        Text("T_min: \(selectedClimatePoint.normalLow, specifier: "%.1f") °F")
+                        Text("T_max: \(selectedClimatePoint.normalHigh, specifier: "%.1f") °F")
+                        Text("Solar: \(selectedClimatePoint.solarEnergy, specifier: "%.2f") kWh/m²/day")
+                        Text("s(t): \(selectedClimatePoint.normalizedSolar, specifier: "%.3f")")
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.72))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
             }
             
             ///Adds the green arrows
@@ -2232,6 +2410,36 @@ struct ClimateGraphView: View {
         }
         .chartXScale(domain: -0.1...1.1)
         .chartYScale(domain: hysteresisTemperatureDomain)
+        .chartOverlay { proxy in
+            ChartHoverOverlay(
+                proxy: proxy,
+                onHover: { plotLocation in
+                    ///Given this mouse location in pixels, can you translate it into real chart values? So T min & s(t)
+                    ///plotLocation.x and plotLocation.y are pixel-ish coordinates inside the plot area
+                    ///they are not climate values yet
+                    ///so proxy.value(atX: plotLocation.x...) means, at this x-pos in the plot, what x-axis value does the chart represent?
+                    ///so in one way it is a mapping from pixel space to function space.
+                    ///
+                    ///The guard basically says If I can successfully get hoveredSolar AND hoveredNormalLow, continue.
+                    ///Otherwise: clear selectedClimatePOint and exit this hover update.
+                    ///charts might fail to convert if the pointer is outside the plot area, if the cahrt has not laid itself out yet, or
+                    ///if the axis type does not match what we had asked for
+                    guard let hoveredSolar = proxy.value(atX: plotLocation.x, as: Double.self),
+                          let hoveredNormalLow = proxy.value(atY: plotLocation.y, as: Double.self) else {
+                        selectedClimatePoint = nil
+                        return
+                    }
+                    
+                    selectedClimatePoint = hysteresisPoint(
+                        closestToNormalizedSolar: hoveredSolar,
+                        normalLow: hoveredNormalLow
+                    )
+                },
+                onEnded: {
+                    selectedClimatePoint = nil
+                }
+            )
+        }
         /// Make it so that the Y axis goes from base 10 below the minimum temp and above the max temp.
         .chartYAxis {
             AxisMarks(values: .stride(by: 10))
