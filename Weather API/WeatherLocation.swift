@@ -19,6 +19,7 @@ struct WeatherLocation: Identifiable, Equatable, Hashable {
     let forecastDiscussionOffice: String
     let climatologyProfile: ClimatologyProfile
     let timeZoneIdentifier: String
+    let acisStationID: String
 }
 
 extension WeatherLocation {
@@ -33,7 +34,8 @@ extension WeatherLocation {
         longitude: -115.19167,
         forecastDiscussionOffice: "VEF",
         climatologyProfile: .northLasVegas,
-        timeZoneIdentifier: "America/Los_Angeles"
+        timeZoneIdentifier: "America/Los_Angeles",
+        acisStationID: "KVGT"
     )
     /// Here is Fairbanks, AK
     static let fairbanks = WeatherLocation(
@@ -45,7 +47,8 @@ extension WeatherLocation {
         longitude: -147.7164,
         forecastDiscussionOffice: "AFG",
         climatologyProfile: .fairbanks,
-        timeZoneIdentifier: "America/Anchorage"
+        timeZoneIdentifier: "America/Anchorage",
+        acisStationID: "PAFA"
     )
     /// Here is Ely, NV
     static let ely = WeatherLocation(
@@ -57,7 +60,8 @@ extension WeatherLocation {
         longitude: -114.8886,
         forecastDiscussionOffice: "LKN",
         climatologyProfile: .ely,
-        timeZoneIdentifier: "America/Los_Angeles"
+        timeZoneIdentifier: "America/Los_Angeles",
+        acisStationID: "KELY"
     )
     /// Stanley, ID has joined the chat
     static let stanley = WeatherLocation(
@@ -69,7 +73,9 @@ extension WeatherLocation {
         longitude: -114.93444,
         forecastDiscussionOffice: "PIH",
         climatologyProfile: .stanley,
-        timeZoneIdentifier: "America/Denver"
+        timeZoneIdentifier: "America/Denver",
+        acisStationID: "KSNT"
+        
     )
     /// Salt Lake City, UT
     static let saltlakecity = WeatherLocation(
@@ -81,7 +87,8 @@ extension WeatherLocation {
         longitude: -111.96503,
         forecastDiscussionOffice: "AFDSLC",
         climatologyProfile: .saltlakecity,
-        timeZoneIdentifier: "America/Denver"
+        timeZoneIdentifier: "America/Denver",
+        acisStationID: "KSLC"
     )
     /// Denver, CO
     static let denver = WeatherLocation(
@@ -93,7 +100,8 @@ extension WeatherLocation {
         longitude: -104.65622,
         forecastDiscussionOffice: "BOU",
         climatologyProfile: .denver,
-        timeZoneIdentifier: "America/Denver"
+        timeZoneIdentifier: "America/Denver",
+        acisStationID: "KDEN"
     )
     static let allLocations: [WeatherLocation] = [
         .northLasVegas,
