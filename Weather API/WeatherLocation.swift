@@ -7,6 +7,7 @@ enum ClimatologyProfile: String, Hashable {
     case stanley
     case saltlakecity
     case denver
+    case mountCharleston
 }
 
 struct WeatherLocation: Identifiable, Equatable, Hashable {
@@ -103,13 +104,28 @@ extension WeatherLocation {
         timeZoneIdentifier: "America/Denver",
         acisStationID: "KDEN"
     )
+    
+    ///Kyle Canyon/Mountain Charleston, NV
+    static let mountCharleston = WeatherLocation(
+        id: "mountCharleston",
+        name: "Mount Charleston",
+        observationStationID: "KYCN2",
+        displayStationID: "KYCN2",
+        latitude: 36.264910,
+        longitude: -115.606970,
+        forecastDiscussionOffice: "VEF",
+        climatologyProfile: .mountCharleston,
+        timeZoneIdentifier: "America/Los_Angeles",
+        acisStationID: "KVGT"
+    )
     static let allLocations: [WeatherLocation] = [
         .northLasVegas,
         .fairbanks,
         .ely,
         .stanley,
         .saltlakecity,
-        .denver
+        .denver,
+        .mountCharleston
     ]
     
     var timeZone: TimeZone {

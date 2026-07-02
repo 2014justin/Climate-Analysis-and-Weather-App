@@ -261,7 +261,12 @@ struct WeatherCommands: Commands {
             }
             .keyboardShortcut("6", modifiers: [.command, .option])
             .disabled(selectLocation == nil)
-            
+            ///Mount Charleston, NV
+            Button("Location: Mount Charleston, NV") {
+                selectLocation?(.mountCharleston)
+            }
+            .keyboardShortcut("7", modifiers: [.command, .option])
+            .disabled(selectLocation == nil)
             Divider()
             
             /// PDF/JPG/CSV exported
@@ -319,12 +324,15 @@ enum HistoryDuration: Int, CaseIterable, Identifiable {
 
 /// Add UI element for the climate analyzer drop down menu and make sure
 /// the climate graph of interest is selected.
+/// added threshold seasons climate chart. three climate views in rotation.
 enum ClimateGraphType: Identifiable {
     case annualTemperatureCurve
     case seasonalHysteresisCurve
+    case thresholdSeasons
     static let allGraphs: [ClimateGraphType] = [
         .annualTemperatureCurve,
-        .seasonalHysteresisCurve
+        .seasonalHysteresisCurve,
+        .thresholdSeasons
     ]
     var id: String {
         title
@@ -335,7 +343,64 @@ enum ClimateGraphType: Identifiable {
             return "Annual Temperature Curve"
         case .seasonalHysteresisCurve:
             return "Seasonal Hysteresis Curve"
+        case .thresholdSeasons:
+            return "Threshold Seasons"
         }
+    }
+}
+///threshold risk season. gives us exactly two valid modes: Spring risk and fall risk.
+enum ThresholdRiskSeason: String, CaseIterable, Identifiable {
+    case spring
+    case fall
+    
+    var id: String {
+        rawValue
+    }
+    
+    var title: String {
+        switch self {
+        case .spring:
+            return "Spring"
+        case .fall:
+            return "Fall"
+        }
+    }
+    
+    var datePhrase: String {
+        switch self {
+        case .spring:
+            return "Spring after"
+        case .fall:
+            return "Fall before"
+        }
+    }
+}
+///output thresholds as graphs
+enum ThresholdOutputMode: String, CaseIterable, Identifiable {
+    case graph
+    case table
+    
+    var id: String {
+        rawValue
+    }
+    
+    var title: String {
+        switch self {
+        case .graph:
+            return "Graph"
+        case .table:
+            return "Table"
+        }
+    }
+}
+///the points themselves
+struct ThresholdRiskChartPoint: Identifiable {
+    let threshold: Double
+    let percent: Double
+    let date: Date
+    
+    var id: String {
+        "\(threshold)-\(percent)"
     }
 }
 
@@ -594,6 +659,12 @@ struct ContentView: View {
                 Button("Show Seasonal Hysteresis Curve") {
                     selectedClimateGraph = .seasonalHysteresisCurve
                     activeClimateGraph = .seasonalHysteresisCurve
+                }
+                
+                ///threshold seasons button
+                Button("Show Threshold Seasons") {
+                    selectedClimateGraph = .thresholdSeasons
+                    activeClimateGraph = .thresholdSeasons
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -1427,6 +1498,7 @@ struct ContentView: View {
             networkStatus = "PDF export failed: \(error.localizedDescription)"
         }
     }
+    
     private func loadForecastDiscussion() async {
         isLoadingForecastDiscussion = true
         
@@ -1610,7 +1682,20 @@ struct ContentView: View {
                 
                 networkStatus = "Weather updated successfully in \(formattedFetchSeconds) seconds. \(temperatureHistory.count) graph points loaded. \(forecast.properties.periods.count) forecast hours loaded."
             } else {
-                networkStatus = "No complete observation found."
+                observation = WeatherObservation(
+                    stationID: selectedLocation.displayStationID,
+                    airTemperature: 0.0,
+                    dewPoint: 0.0,
+                    heatIndex: 0.0,
+                    relativeHumidity: 0.0,
+                    windSpeed: 0.0,
+                    pressure: 0.0,
+                    wetBulb: 0.0,
+                    coolingPotential: 0.0,
+                    condition: "No live observation",
+                    lastUpdated: "Unavailable"
+                )
+                networkStatus = "No complete live observation found for \(selectedLocation.displayStationID). Forecast still loaded from location coordinates."
             }
         } catch {
             networkStatus = "Request failed: \(error.localizedDescription)"
@@ -1624,7 +1709,165 @@ struct ClimateGraphView: View {
     let location: WeatherLocation
     @State private var keyMonitor: Any?
     @State private var selectedClimatePoint: ClimateDayPoint?
-    /// Add forwards and backward buttons to the climate graph.
+    ///holds the calculated ACIS result
+    @State private var thresholdSummaries: [ACISThresholdSummary] = []
+    ///lets us show loading state or disable buttons
+    @State private var isLoadingThresholdSummary = false
+    ///human readable status or error message.
+    @State private var thresholdSummaryStatus = "Not loaded yet"
+    /// loader function for climate data
+    @State private var selectedThresholds: Set<Double> = [32.0]
+    @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
+    @State private var thresholdOutputMode = ThresholdOutputMode.graph
+    @State private var thresholdObservations: [ACISDailyObservation] = []
+    
+    
+    private let thresholdPresets = [20.0, 28.0, 32.0, 36.0, 40.0, 45.0]
+    private func thresholdText(_ threshold: Double) -> String {
+        threshold.formatted(.number.precision(.fractionLength(0)))
+    }
+
+    private var sortedSelectedThresholds: [Double] {
+        thresholdPresets.filter { threshold in
+            selectedThresholds.contains(threshold)
+        }
+    }
+
+    private var selectedThresholdText: String {
+        let selectedTexts = sortedSelectedThresholds.map { threshold in
+            "\(thresholdText(threshold))°F"
+        }
+
+        return selectedTexts.isEmpty ? "none" : selectedTexts.joined(separator: ", ")
+    }
+    ///makes it possible to select mult temperatures
+    private func toggleThreshold(_ threshold: Double) {
+        if selectedThresholds.contains(threshold) {
+            if selectedThresholds.count > 1 {
+                selectedThresholds.remove(threshold)
+            }
+        } else {
+            selectedThresholds.insert(threshold)
+        }
+    }
+    ///given the current mode, what data should I show?
+    private func riskDateText(for riskPoint: ACISThresholdRiskPoint) -> String {
+        switch selectedThresholdRiskSeason {
+        case .spring:
+            return ACISThresholdCalculator.monthDayText(
+                fromAverageDayOfYear: riskPoint.springRiskDay
+            )
+            
+        case .fall:
+            return ACISThresholdCalculator.monthDayText(
+                fromAverageDayOfYear: riskPoint.fallRiskDay
+            )
+        }
+    }
+    ///same function riskDateText, different parameter list. Swift can tell which one you mean whether we include the argument 'season'
+    private func riskDateText(
+        for riskPoint: ACISThresholdRiskPoint,
+        season: ThresholdRiskSeason
+    ) -> String {
+        switch season {
+        case .spring:
+            return ACISThresholdCalculator.monthDayText(
+                fromAverageDayOfYear: riskPoint.springRiskDay
+            )
+        case .fall:
+            return ACISThresholdCalculator.monthDayText(
+                fromAverageDayOfYear: riskPoint.fallRiskDay
+            )
+        }
+    }
+    
+    
+    private func riskDay(for riskPoint: ACISThresholdRiskPoint) -> Double? {
+        switch selectedThresholdRiskSeason {
+        case .spring:
+            return riskPoint.springRiskDay
+        case .fall:
+            return riskPoint.fallRiskDay
+        }
+    }
+    
+    ///date from day of year mapping function
+    private func dateFromDayOfYear(_ dayOfYear: Double?) -> Date? {
+        guard let dayOfYear else {
+            return nil
+        }
+        
+        let calendar = Calendar(identifier: .gregorian)
+        let roundedDay = Int(dayOfYear.rounded())
+        
+        return calendar.date(
+            from: DateComponents(year: 2001, day: roundedDay)
+        )
+    }
+    
+    private var thresholdRiskChartPoints: [ThresholdRiskChartPoint] {
+        thresholdSummaries.flatMap { summary in
+            summary.thresholdRiskPoints.compactMap { riskPoint in
+                guard let date = dateFromDayOfYear(riskDay(for: riskPoint)) else {
+                    return nil
+                }
+                
+                return ThresholdRiskChartPoint(
+                    threshold: summary.threshold,
+                    percent: riskPoint.percent,
+                    date: date
+                )
+            }
+            .sorted { firstPoint, secondPoint in
+                firstPoint.date < secondPoint.date
+            }
+        }
+    }
+    
+    private func recalculateThresholdSummaries(from observations: [ACISDailyObservation]? = nil) {
+        let sourceObservations = observations ?? thresholdObservations
+        
+        guard sourceObservations.isEmpty == false else {
+            thresholdSummaries = []
+            return
+        }
+        
+        thresholdSummaries = sortedSelectedThresholds.map { threshold in
+            ACISThresholdCalculator.thresholdSummary(
+                from: sourceObservations,
+                startYear: 1991,
+                endYear: 2020,
+                threshold: threshold
+            )
+        }
+    }
+    private func loadThresholdSummary() async {
+        isLoadingThresholdSummary = true
+        thresholdSummaryStatus = "Loading ACIS threshold data..."
+        
+        defer {
+            isLoadingThresholdSummary = false
+        }
+        ///climatology = 1991 to 2020.
+        do {
+            let observations = try await ACISClimateService.fetchDailyObservations(
+                stationID: location.acisStationID,
+                startDate: "1991-01-01",
+                endDate: "2020-12-31"
+            )
+            
+            thresholdObservations = observations
+            recalculateThresholdSummaries(from: observations)
+            thresholdSummaryStatus = "Loaded \(observations.count) ACIS daily rows."
+            
+        } catch {
+            thresholdSummaries = []
+            thresholdSummaryStatus = "ACIS threshold load failed: \(error.localizedDescription)"
+            thresholdObservations = []
+        }
+    }
+    
+    
     /// Adds a current graph index. So annual temp curve would be index 0.
     private var currentGraphIndex: Int {
         ClimateGraphType.allGraphs.firstIndex { $0.id == graphType.id } ?? 0
@@ -2050,6 +2293,183 @@ struct ClimateGraphView: View {
         
         return formatter.string(from: date)
     }
+    ///placeholder graph for threshold seasons
+    ///adds chart for threshold risks
+    ///now for the chart as a secondary source of information
+    private var thresholdRiskChart: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(selectedThresholdRiskSeason.title) Risk Probability")
+                .font(.headline)
+            
+            Chart {
+                ForEach(thresholdRiskChartPoints) { point in
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("Probability", point.percent)
+                    )
+                    .foregroundStyle(by: .value("Threshold", "\(thresholdText(point.threshold))°F"))
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
+            }
+            .chartYScale(domain: 0...100)
+            .chartYAxis {
+                AxisMarks(position: .leading, values: Array(stride(from: 0.0, through: 100, by: 10.0))) { value in
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel {
+                        if let percent = value.as(Double.self) {
+                            Text("\(percent.formatted(.number.precision(.fractionLength(0))))%")
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .month)) { value in
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                }
+            }
+            .frame(height: 320)
+        }
+    }
+    ///nice formatting for the table:
+    private var thresholdRiskTable: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(selectedThresholdRiskSeason.title) Risk Dates")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Text("Temp")
+                        .fontWeight(.semibold)
+
+                    ForEach([90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0], id: \.self) { percent in
+                        Text("\(percent.formatted(.number.precision(.fractionLength(0))))%")
+                            .fontWeight(.semibold)
+                    }
+                }
+
+                Divider()
+                    .gridCellColumns(10)
+
+                ForEach(thresholdSummaries, id: \.threshold) { summary in
+                    GridRow {
+                        Text("\(thresholdText(summary.threshold))°F")
+                            .fontWeight(.semibold)
+
+                        ForEach([90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0], id: \.self) { percent in
+                            let matchingPoint = summary.thresholdRiskPoints.first { riskPoint in
+                                riskPoint.percent == percent
+                            }
+
+                            Text(
+                                matchingPoint.map {
+                                    riskDateText(
+                                        for: $0,
+                                        season: selectedThresholdRiskSeason
+                                    )
+                                } ?? "none"
+                            )
+                            .monospacedDigit()
+                        }
+                    }
+                }
+            }
+            .font(.callout)
+        }
+    }
+    
+    private var thresholdSeasonsChart: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Threshold Seasons")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text("Station: \(location.acisStationID)")
+                .font(.headline)
+            
+            Text("Min temperature thresholds: \(selectedThresholdText), 1991-2020")
+                .foregroundStyle(.secondary)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Minimum temperature thresholds")
+
+                ForEach(thresholdPresets, id: \.self) { threshold in
+                    let isSelected = selectedThresholds.contains(threshold)
+
+                    Button {
+                        toggleThreshold(threshold)
+                    } label: {
+                        Text("\(thresholdText(threshold))°F")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(isSelected ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.08))
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSelected && selectedThresholds.count == 1)
+                }
+            }
+            Picker("Risk season", selection: $selectedThresholdRiskSeason) {
+                ForEach(ThresholdRiskSeason.allCases) { season in
+                    Text(season.title)
+                        .tag(season)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            
+            Picker("Output", selection: $thresholdOutputMode) {
+                ForEach(ThresholdOutputMode.allCases) { mode in
+                    Text(mode.title)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            
+            Text(thresholdSummaryStatus)
+                .foregroundStyle(.secondary)
+            
+            if isLoadingThresholdSummary {
+                ProgressView()
+            }
+            
+            if thresholdSummaries.isEmpty == false {
+                Divider()
+
+                ForEach(thresholdSummaries, id: \.threshold) { thresholdSummary in
+                    let yearCount = thresholdSummary.endYear - thresholdSummary.startYear + 1
+                    let thresholdLabel = thresholdText(thresholdSummary.threshold)
+
+                    Text("\(thresholdLabel)°F: complete \(thresholdSummary.completeSeasonCount), spring \(thresholdSummary.springEventCount)/\(yearCount), fall \(thresholdSummary.fallEventCount)/\(yearCount)")
+                        .font(.headline)
+                }
+
+                Divider()
+
+                switch thresholdOutputMode {
+                    ///already defined thresholdRiskChart & threshold risk table
+                case .graph:
+                    thresholdRiskChart
+                    
+                case .table:
+                    thresholdRiskTable
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .task {
+            await loadThresholdSummary()
+        }
+        .onChange(of: selectedThresholds) {
+            recalculateThresholdSummaries()
+        }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -2084,11 +2504,16 @@ struct ClimateGraphView: View {
             switch graphType {
             case .annualTemperatureCurve:
                 annualTemperatureChart
+                
             case .seasonalHysteresisCurve:
                 seasonalHysteresisChart
+                
+            case .thresholdSeasons:
+                ScrollView {
+                    thresholdSeasonsChart
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            
-            Spacer()
         }
         .padding()
         .frame(minWidth: 800, minHeight: 600)

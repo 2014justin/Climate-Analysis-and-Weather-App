@@ -398,6 +398,106 @@ enum WeatherAlmanac {
             + 0.00306499 * cos(3.0 * w * day) - 0.00188839 * sin(3.0 * w * day)
             + 0.00041146 * cos(4.0 * w * day) - 0.00034823 * sin(4.0 * w * day)
     }
+    ///Mount Charleston
+    static func mountCharlestonHighFahrenheit(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 59.6821917808
+            - 16.7221368331 * cos(w * day)
+            - 7.4515681118 * sin(w * day)
+            + 0.5126886474 * cos(2.0 * w * day)
+            + 2.0756970701 * sin(2.0 * w * day)
+            - 0.5103800952 * cos(3.0 * w * day)
+            + 0.3910702492 * sin(3.0 * w * day)
+            + 0.3380157657 * cos(4.0 * w * day)
+            + 0.1055213916 * sin(4.0 * w * day)
+            + 0.0696870913 * cos(5.0 * w * day)
+            + 0.6719000664 * sin(5.0 * w * day)
+            + 0.2348401086 * cos(6.0 * w * day)
+            + 0.2717552529 * sin(6.0 * w * day)
+            - 0.0154977786 * cos(7.0 * w * day)
+            + 0.0066223563 * sin(7.0 * w * day)
+            + 0.0508063148 * cos(8.0 * w * day)
+            - 0.0321314199 * sin(8.0 * w * day)
+            - 0.0094791080 * cos(9.0 * w * day)
+            + 0.0140271254 * sin(9.0 * w * day)
+            + 0.0606506512 * cos(10.0 * w * day)
+            + 0.0175291678 * sin(10.0 * w * day)
+    }
+
+    static func mountCharlestonLowFahrenheit(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 34.5013698630
+            - 14.4952669650 * cos(w * day)
+            - 6.3586150251 * sin(w * day)
+            + 0.8964680303 * cos(2.0 * w * day)
+            + 2.8534670724 * sin(2.0 * w * day)
+            - 0.0734816394 * cos(3.0 * w * day)
+            - 0.3228985163 * sin(3.0 * w * day)
+            - 0.0281823736 * cos(4.0 * w * day)
+            + 0.2784110606 * sin(4.0 * w * day)
+            + 0.3416522800 * cos(5.0 * w * day)
+            + 0.4216806013 * sin(5.0 * w * day)
+            + 0.3577181462 * cos(6.0 * w * day)
+            + 0.2900204149 * sin(6.0 * w * day)
+            + 0.0221991594 * cos(7.0 * w * day)
+            + 0.0274969757 * sin(7.0 * w * day)
+            + 0.0032607286 * cos(8.0 * w * day)
+            + 0.0294150248 * sin(8.0 * w * day)
+            - 0.0318734457 * cos(9.0 * w * day)
+            + 0.0181622517 * sin(9.0 * w * day)
+            - 0.0473066037 * cos(10.0 * w * day)
+            + 0.0276005407 * sin(10.0 * w * day)
+    }
+
+    static func mountCharlestonSolarEnergy(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 8.2021168622
+            - 3.5510840220 * cos(w * day)
+            + 0.6994211828 * sin(w * day)
+            - 0.2032988670 * cos(2.0 * w * day)
+            + 0.0644825252 * sin(2.0 * w * day)
+            + 0.0211554225 * cos(3.0 * w * day)
+            - 0.0132818507 * sin(3.0 * w * day)
+            + 0.0027729666 * cos(4.0 * w * day)
+            - 0.0023392330 * sin(4.0 * w * day)
+            + 0.0000042639 * cos(5.0 * w * day)
+            + 0.0000096104 * sin(5.0 * w * day)
+            + 0.0000232448 * cos(6.0 * w * day)
+            - 0.0000443656 * sin(6.0 * w * day)
+            + 0.0000004131 * cos(7.0 * w * day)
+            - 0.0000008206 * sin(7.0 * w * day)
+            + 0.0000001649 * cos(8.0 * w * day)
+            - 0.0000013172 * sin(8.0 * w * day)
+    }
+
+    static func mountCharlestonNormalizedSolarEnergy(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 0.5290535820
+            - 0.4939632704 * cos(w * day)
+            + 0.0972909604 * sin(w * day)
+            - 0.0282793008 * cos(2.0 * w * day)
+            + 0.0089696551 * sin(2.0 * w * day)
+            + 0.0029427638 * cos(3.0 * w * day)
+            - 0.0018475334 * sin(3.0 * w * day)
+            + 0.0003857255 * cos(4.0 * w * day)
+            - 0.0003253922 * sin(4.0 * w * day)
+            + 0.0000005931 * cos(5.0 * w * day)
+            + 0.0000013368 * sin(5.0 * w * day)
+            + 0.0000032334 * cos(6.0 * w * day)
+            - 0.0000061713 * sin(6.0 * w * day)
+            + 0.0000000575 * cos(7.0 * w * day)
+            - 0.0000001141 * sin(7.0 * w * day)
+            + 0.0000000229 * cos(8.0 * w * day)
+            - 0.0000001832 * sin(8.0 * w * day)
+    }
     
     /// Generalized normal high fahrenheit
     static func normalHighFahrenheit(
@@ -417,6 +517,8 @@ enum WeatherAlmanac {
             return slcNormalHighFahrenheit(dayOfYear: t)
         case .denver:
             return denverNormalHighFahrenheit(dayOfYear: t)
+        case .mountCharleston:
+            return mountCharlestonHighFahrenheit(dayOfYear: t)
         }
     }
     
@@ -441,6 +543,8 @@ enum WeatherAlmanac {
             return slcNormalLowFahrenheit(dayOfYear: t)
         case .denver:
             return denverNormalLowFahrenheit(dayOfYear: t)
+        case .mountCharleston:
+            return mountCharlestonLowFahrenheit(dayOfYear: t)
         }
     }
     
@@ -464,6 +568,8 @@ enum WeatherAlmanac {
             return slcSolarEnergy(dayOfYear: t)
         case .denver:
             return denverSolarEnergy(dayOfYear: t)
+        case .mountCharleston:
+            return mountCharlestonSolarEnergy(dayOfYear: t)
         }
     }
     /// normalized insolation for any climate location
@@ -484,6 +590,8 @@ enum WeatherAlmanac {
             return slcNormalizedSolarEnergy(dayOfYear: t)
         case .denver:
             return denverNormalizedSolarEnergy(dayOfYear: t)
+        case .mountCharleston:
+            return mountCharlestonNormalizedSolarEnergy(dayOfYear: t)
         }
     }
     static func sunTimes(
