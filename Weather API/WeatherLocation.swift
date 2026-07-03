@@ -8,6 +8,7 @@ enum ClimatologyProfile: String, Hashable {
     case saltlakecity
     case denver
     case mountCharleston
+    case longBeach
 }
 
 struct WeatherLocation: Identifiable, Equatable, Hashable {
@@ -118,6 +119,20 @@ extension WeatherLocation {
         timeZoneIdentifier: "America/Los_Angeles",
         acisStationID: "MCHN2"
     )
+    
+    ///Long Beach, CA
+    static let longBeach = WeatherLocation(
+        id: "longBeach",
+        name: "Long Beach, CA",
+        observationStationID: "KLGB",
+        displayStationID: "KLGB",
+        latitude: 33.81167,
+        longitude: -118.14639,
+        forecastDiscussionOffice: "VEF",
+        climatologyProfile: .longBeach,
+        timeZoneIdentifier: "America/Los_Angeles",
+        acisStationID: "KLGB"
+    )
     static let allLocations: [WeatherLocation] = [
         .northLasVegas,
         .fairbanks,
@@ -125,7 +140,8 @@ extension WeatherLocation {
         .stanley,
         .saltlakecity,
         .denver,
-        .mountCharleston
+        .mountCharleston,
+        .longBeach
     ]
     
     var timeZone: TimeZone {

@@ -498,6 +498,87 @@ enum WeatherAlmanac {
             + 0.0000000229 * cos(8.0 * w * day)
             - 0.0000001832 * sin(8.0 * w * day)
     }
+    ///Long BEACH, CA
+    static func longBeachHighFahrenheit(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 74.04109589
+            - 6.17845800 * cos(1.0 * w * day)
+            - 5.31306282 * sin(1.0 * w * day)
+            - 1.29079973 * cos(2.0 * w * day)
+            + 1.49793513 * sin(2.0 * w * day)
+            + 0.10691112 * cos(3.0 * w * day)
+            - 0.02455107 * sin(3.0 * w * day)
+            + 0.04495360 * cos(4.0 * w * day)
+            + 0.72762009 * sin(4.0 * w * day)
+            - 0.34177639 * cos(5.0 * w * day)
+            + 0.41124284 * sin(5.0 * w * day)
+            + 0.39287254 * cos(6.0 * w * day)
+            + 0.42330032 * sin(6.0 * w * day)
+    }
+
+    static func longBeachLowFahrenheit(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 56.02465753
+            - 8.51634638 * cos(1.0 * w * day)
+            - 4.31527058 * sin(1.0 * w * day)
+            - 1.28912589 * cos(2.0 * w * day)
+            + 1.29294976 * sin(2.0 * w * day)
+            - 0.25850260 * cos(3.0 * w * day)
+            + 0.44539891 * sin(3.0 * w * day)
+            + 0.07348014 * cos(4.0 * w * day)
+            + 0.34888072 * sin(4.0 * w * day)
+            + 0.21343068 * cos(5.0 * w * day)
+            - 0.02841200 * sin(5.0 * w * day)
+            + 0.09819506 * cos(6.0 * w * day)
+            + 0.22511496 * sin(6.0 * w * day)
+    }
+
+    static func longBeachSolarEnergy(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        return 8.42316086
+            - 3.31902960 * cos(1.0 * w * day)
+            + 0.65843033 * sin(1.0 * w * day)
+            - 0.23557116 * cos(2.0 * w * day)
+            + 0.07742082 * sin(2.0 * w * day)
+            + 0.01917532 * cos(3.0 * w * day)
+            - 0.01222063 * sin(3.0 * w * day)
+            + 0.00251931 * cos(4.0 * w * day)
+            - 0.00212173 * sin(4.0 * w * day)
+            + 0.00000247 * cos(5.0 * w * day)
+            + 0.00001047 * sin(5.0 * w * day)
+            + 0.00001821 * cos(6.0 * w * day)
+            - 0.00003481 * sin(6.0 * w * day)
+    }
+
+    static func longBeachNormalizedSolarEnergy(dayOfYear t: Int) -> Double {
+        let w = 2.0 * Double.pi / 365.0
+        let day = Double(t)
+
+        let L = 4.81807833
+        let H = 11.54047529
+
+        let S = 8.42316086
+            - 3.31902960 * cos(1.0 * w * day)
+            + 0.65843033 * sin(1.0 * w * day)
+            - 0.23557116 * cos(2.0 * w * day)
+            + 0.07742082 * sin(2.0 * w * day)
+            + 0.01917532 * cos(3.0 * w * day)
+            - 0.01222063 * sin(3.0 * w * day)
+            + 0.00251931 * cos(4.0 * w * day)
+            - 0.00212173 * sin(4.0 * w * day)
+            + 0.00000247 * cos(5.0 * w * day)
+            + 0.00001047 * sin(5.0 * w * day)
+            + 0.00001821 * cos(6.0 * w * day)
+            - 0.00003481 * sin(6.0 * w * day)
+
+        return (S - L) / (H - L)
+    }
     
     /// Generalized normal high fahrenheit
     static func normalHighFahrenheit(
@@ -519,6 +600,8 @@ enum WeatherAlmanac {
             return denverNormalHighFahrenheit(dayOfYear: t)
         case .mountCharleston:
             return mountCharlestonHighFahrenheit(dayOfYear: t)
+        case .longBeach:
+            return longBeachHighFahrenheit(dayOfYear: t)
         }
     }
     
@@ -545,6 +628,8 @@ enum WeatherAlmanac {
             return denverNormalLowFahrenheit(dayOfYear: t)
         case .mountCharleston:
             return mountCharlestonLowFahrenheit(dayOfYear: t)
+        case .longBeach:
+            return longBeachLowFahrenheit(dayOfYear: t)
         }
     }
     
@@ -570,6 +655,8 @@ enum WeatherAlmanac {
             return denverSolarEnergy(dayOfYear: t)
         case .mountCharleston:
             return mountCharlestonSolarEnergy(dayOfYear: t)
+        case .longBeach:
+            return longBeachSolarEnergy(dayOfYear: t)
         }
     }
     /// normalized insolation for any climate location
@@ -592,6 +679,8 @@ enum WeatherAlmanac {
             return denverNormalizedSolarEnergy(dayOfYear: t)
         case .mountCharleston:
             return mountCharlestonNormalizedSolarEnergy(dayOfYear: t)
+        case .longBeach:
+            return longBeachNormalizedSolarEnergy(dayOfYear: t)
         }
     }
     static func sunTimes(

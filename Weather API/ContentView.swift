@@ -267,7 +267,16 @@ struct WeatherCommands: Commands {
             }
             .keyboardShortcut("7", modifiers: [.command, .option])
             .disabled(selectLocation == nil)
+            
+            ///Long Beach, CA unfortunately had to do Com + Shift + Op + 7 because C + O + 8 is a MacOS shortcut
+            ///
+            Button("Location: Long Beach, CA") {
+                selectLocation?(.longBeach)
+            }
+            .keyboardShortcut("8", modifiers: [.command, .option, .shift])
+            .disabled(selectLocation == nil)
             Divider()
+            
             
             /// PDF/JPG/CSV exported
             Button("Export PDF") {
@@ -1832,6 +1841,7 @@ struct ClimateGraphView: View {
     @State private var selectedThresholds: Set<Double> = [32.0]
     @State private var selectedThresholdEventMode = ThresholdEventMode.coldNights
     @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
+    @State private var selectedThresholdRiskPoint: ThresholdRiskChartPoint?
     @State private var thresholdOutputMode = ThresholdOutputMode.graph
     @State private var thresholdObservations: [ACISDailyObservation] = []
     
@@ -1936,6 +1946,50 @@ struct ClimateGraphView: View {
         return calendar.date(
             from: DateComponents(year: 2001, day: roundedDay)
         )
+    }
+    
+    private var thresholdRiskDateDomain: ClosedRange<Date> {
+        let dates = thresholdRiskChartPoints.map { point in
+            point.date
+        }
+
+        guard let earliestDate = dates.min(),
+              let latestDate = dates.max() else {
+            let calendar = Calendar(identifier: .gregorian)
+            let startDate = calendar.date(from: DateComponents(year: 2001, month: 1, day: 1))!
+            let endDate = calendar.date(from: DateComponents(year: 2001, month: 12, day: 31))!
+            return startDate...endDate
+        }
+
+        let calendar = Calendar(identifier: .gregorian)
+        let paddedStart = calendar.date(byAdding: .day, value: -7, to: earliestDate) ?? earliestDate
+        let paddedEnd = calendar.date(byAdding: .day, value: 7, to: latestDate) ?? latestDate
+
+        return paddedStart...paddedEnd
+    }
+
+    private var thresholdMajorAxisDates: [Date] {
+        let calendar = Calendar(identifier: .gregorian)
+        let domain = thresholdRiskDateDomain
+
+        return (1...12).compactMap { month in
+            calendar.date(from: DateComponents(year: 2001, month: month, day: 1))
+        }
+        .filter { date in
+            domain.contains(date)
+        }
+    }
+
+    private var thresholdMinorAxisDates: [Date] {
+        let calendar = Calendar(identifier: .gregorian)
+        let domain = thresholdRiskDateDomain
+
+        return (1...12).compactMap { month in
+            calendar.date(from: DateComponents(year: 2001, month: month, day: 15))
+        }
+        .filter { date in
+            domain.contains(date)
+        }
     }
     ///This is a computed property, not a stored variable. Basically whenever someone asks for 'thresholdRiskChartPoints'
     ///calculate and return an array of chart-ready points.
@@ -2447,6 +2501,33 @@ struct ClimateGraphView: View {
         
         return formatter.string(from: date)
     }
+    ///nearest point helper. which actual chart point is closest to the mouse? ordered pairs in this space are like
+    ///(May 2, 20%)
+    private func thresholdRiskPoint(
+        closestTo hoveredDate: Date,
+        percent hoveredPercent: Double
+        ///the return type is optional because there might be no points to choose from.
+    ) -> ThresholdRiskChartPoint? {
+        ///If there are no chart points, stop now
+        guard thresholdRiskChartPoints.isEmpty == false else {
+            return nil
+        }
+        ///Between the first & second, whichever has the smaller distance.
+        return thresholdRiskChartPoints.min { first, second in
+            let firstDateDistance = abs(first.date.timeIntervalSince(hoveredDate))
+            let secondDateDistance = abs(second.date.timeIntervalSince(hoveredDate))
+            
+            let firstPercentDistance = abs(first.percent - hoveredPercent)
+            let secondPercentDistance = abs(second.percent - hoveredPercent)
+            ///without this, date distances would be giant numbers like 172800, and percent distance would be tiny like 3.
+            let secondsPerDay = 24.0 * 60.0 * 60.0
+            
+            let firstScore = (firstDateDistance / secondsPerDay) + firstPercentDistance
+            let secondScore = (secondDateDistance / secondsPerDay) + secondPercentDistance
+            
+            return firstScore < secondScore
+        }
+    }
     ///placeholder graph for threshold seasons
     ///adds chart for threshold risks
     ///now for the chart as a secondary source of information
@@ -2454,8 +2535,15 @@ struct ClimateGraphView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("\(selectedThresholdRiskSeason.title) Risk Probability")
                 .font(.headline)
-            
+
             Chart {
+                ForEach(thresholdMinorAxisDates, id: \.self) { date in
+                    RuleMark(
+                        x: .value("Half Month", date)
+                    )
+                    .foregroundStyle(.white.opacity(0.16))
+                    .lineStyle(StrokeStyle(lineWidth: 0.75, dash: [3, 5]))
+                }
                 ForEach(thresholdRiskChartPoints) { point in
                     LineMark(
                         x: .value("Date", point.date),
@@ -2464,8 +2552,23 @@ struct ClimateGraphView: View {
                     .foregroundStyle(by: .value("Threshold", "\(thresholdText(point.threshold))°F"))
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
                 }
+
+                if let selectedThresholdRiskPoint {
+                    PointMark(
+                        x: .value("Date", selectedThresholdRiskPoint.date),
+                        y: .value("Probability", selectedThresholdRiskPoint.percent)
+                    )
+                    .foregroundStyle(.white)
+                    .symbolSize(60)
+
+                    RuleMark(
+                        x: .value("Date", selectedThresholdRiskPoint.date)
+                    )
+                    .foregroundStyle(.white.opacity(0.45))
+                }
             }
             .chartYScale(domain: 0...100)
+            .chartXScale(domain: thresholdRiskDateDomain)
             .chartYAxis {
                 AxisMarks(position: .leading, values: Array(stride(from: 0.0, through: 100, by: 10.0))) { value in
                     AxisGridLine()
@@ -2478,10 +2581,74 @@ struct ClimateGraphView: View {
                 }
             }
             .chartXAxis {
-                AxisMarks(values: .stride(by: .month)) { value in
+                AxisMarks(values: thresholdMajorAxisDates) { value in
                     AxisGridLine()
                     AxisTick()
-                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date, format: .dateTime.month(.abbreviated).day())
+                        }
+                    }
+                }
+
+                AxisMarks(values: thresholdMinorAxisDates) { _ in
+                    AxisTick()
+                        .foregroundStyle(.secondary.opacity(0.75))
+                    
+                    AxisValueLabel {
+                        Text("15")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .chartOverlay { proxy in
+                ChartHoverOverlay(
+                    proxy: proxy,
+                    onHover: { plotLocation in
+                        guard let hoveredDate = proxy.value(atX: plotLocation.x, as: Date.self),
+                              let hoveredPercent = proxy.value(atY: plotLocation.y, as: Double.self) else {
+                            selectedThresholdRiskPoint = nil
+                            return
+                        }
+
+                        selectedThresholdRiskPoint = thresholdRiskPoint(
+                            closestTo: hoveredDate,
+                            percent: hoveredPercent
+                        )
+                    },
+                    onEnded: {
+                        selectedThresholdRiskPoint = nil
+                    }
+                )
+            }
+            .chartBackground { proxy in
+                GeometryReader { geometry in
+                    if let selectedThresholdRiskPoint,
+                       let anchor = proxy.plotFrame {
+                        let plotFrame = geometry[anchor]
+                        let xPosition = proxy.position(forX: selectedThresholdRiskPoint.date) ?? 0
+                        let yPosition = proxy.position(forY: selectedThresholdRiskPoint.percent) ?? 0
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(thresholdText(selectedThresholdRiskPoint.threshold))°F")
+                                .fontWeight(.bold)
+
+                            Text("\(selectedThresholdRiskPoint.percent.formatted(.number.precision(.fractionLength(0))))%")
+                                .foregroundStyle(.secondary)
+
+                            Text(selectedThresholdRiskPoint.date, format: .dateTime.month(.abbreviated).day())
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .padding(8)
+                        .background(.black.opacity(0.78))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .position(
+                            x: plotFrame.origin.x + xPosition + (xPosition > plotFrame.width - 120 ? -54 : 54),
+                            y: plotFrame.origin.y + yPosition + (yPosition < 48 ? 42 : -34)
+                        )
+                    }
                 }
             }
             .frame(height: 320)
@@ -2617,16 +2784,8 @@ struct ClimateGraphView: View {
             }
             
             if thresholdSummaries.isEmpty == false {
-                Divider()
-
-                ForEach(thresholdSummaries, id: \.threshold) { thresholdSummary in
-                    let yearCount = thresholdSummary.endYear - thresholdSummary.startYear + 1
-                    let thresholdLabel = thresholdText(thresholdSummary.threshold)
-
-                    Text("\(thresholdLabel)°F: complete \(thresholdSummary.completeSeasonCount), spring \(thresholdSummary.springEventCount)/\(yearCount), fall \(thresholdSummary.fallEventCount)/\(yearCount)")
-                        .font(.headline)
-                }
-
+                
+                
                 Divider()
 
                 switch thresholdOutputMode {
