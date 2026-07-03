@@ -116,7 +116,7 @@ extension WeatherLocation {
         forecastDiscussionOffice: "VEF",
         climatologyProfile: .mountCharleston,
         timeZoneIdentifier: "America/Los_Angeles",
-        acisStationID: "KVGT"
+        acisStationID: "MCHN2"
     )
     static let allLocations: [WeatherLocation] = [
         .northLasVegas,

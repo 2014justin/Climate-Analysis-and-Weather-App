@@ -12,6 +12,56 @@ struct ACISDailyObservation: Identifiable {
     let snowfall: Double?
     let snowDepth: Double?
 }
+///temperature field
+enum ACISTemperatureField {
+    case minimum
+    case maximum
+    
+    func value(from observation: ACISDailyObservation) -> Double? {
+        switch self {
+        case .minimum:
+            return observation.minimumTemperature
+        case .maximum:
+            return observation.maximumTemperature
+        }
+    }
+}
+///threshold comparison, maximum or minimum temp
+enum ACISThresholdComparison {
+    case lessThan
+    case lessThanOrEqual
+    case greaterThan
+    case greaterThanOrEqual
+    
+    func matches(value: Double, threshold: Double) -> Bool {
+        switch self {
+        case .lessThan:
+            return value < threshold
+        case .lessThanOrEqual:
+            return value <= threshold
+        case .greaterThan:
+            return value > threshold
+        case .greaterThanOrEqual:
+            return value >= threshold
+        }
+    }
+}
+///season eventwhen we find matching dates, do we want the first one or the last one?
+///so like the last afternoon high below 80 degrees in las vegas is late may.
+enum ACISSeasonEventChoice {
+    case first
+    case last
+    
+    func date(from dates: [Date]) -> Date? {
+        switch self {
+        case .first:
+            return dates.min()
+        case .last:
+            return dates.max()
+        }
+    }
+}
+
 ///Define threshold seasons like date of last spring freeze & first fall freeze. But eventually we can do any temperature
 ///threshold.
 ///Las vegas might not hit mintemp less than 20 every year, so last spring, and first fall might be nil.
@@ -108,6 +158,10 @@ enum ACISDateParser {
 ///and the mapper turns it into date: ..., minimum temperature : -18, maximumTemperature: 6, precipitation: 0, snowfall: 0, snowdepth : 10
 enum ACISDailyObservationMapper {
     static func observation(from row: [String]) -> ACISDailyObservation? {
+        ///before pulling ACISDailyObservation, make sure this row has at least
+        ///6 pieces of data and make sure the first piece can become a real Date. If either thing fails, return nil.
+        ///
+        ///
         guard row.count >= 6,
               let date = ACISDateParser.date(from: row[0]) else {
             return nil
@@ -160,34 +214,43 @@ enum ACISThresholdCalculator {
     static func thresholdSeason(
         from observations: [ACISDailyObservation],
         year: Int,
-        threshold: Double
+        threshold: Double,
+        field: ACISTemperatureField = .minimum,
+        comparison: ACISThresholdComparison = .lessThanOrEqual,
+        springEventChoice: ACISSeasonEventChoice = .last,
+        fallEventChoice: ACISSeasonEventChoice = .first
     ) -> ACISThresholdSeason {
         let calendar = Calendar(identifier: .gregorian)
         ///filters observations to temps in spring that match our threshold
         ///the number 8 is because thermal midsommar boundary is usually Aug 1.
         let springObservations = observations.filter { observation in
-            guard let minimumTemperature = observation.minimumTemperature,
+            guard let temperatureValue = field.value(from: observation),
                   calendar.component(.year, from: observation.date) == year,
                   calendar.component(.month, from: observation.date) < 8 else {
                 return false
             }
             
-            return minimumTemperature <= threshold
+            return comparison.matches(value: temperatureValue, threshold: threshold)
         }
-        
+
         let fallObservations = observations.filter { observation in
-            guard let minimumTemperature = observation.minimumTemperature,
+            guard let temperatureValue = field.value(from: observation),
                   calendar.component(.year, from: observation.date) == year,
                   calendar.component(.month, from: observation.date) >= 8 else {
                 return false
             }
             
-            return minimumTemperature <= threshold
+            return comparison.matches(value: temperatureValue, threshold: threshold)
         }
         /// last spring date is when the latest 32 F morning was found in the spring column, hence the max
         /// first fall date is when the earliest 32 F morning was found in the fall column, hence the minimum
-        let lastSpringDate = springObservations.map { $0.date }.max()
-        let firstFallDate = fallObservations.map { $0.date }.min()
+        let lastSpringDate = springEventChoice.date(
+            from: springObservations.map { $0.date }
+        )
+
+        let firstFallDate = fallEventChoice.date(
+            from: fallObservations.map { $0.date }
+        )
         
         return ACISThresholdSeason(
             year: year,
@@ -199,15 +262,21 @@ enum ACISThresholdCalculator {
         from observations: [ACISDailyObservation],
         startYear: Int,
         endYear: Int,
-        threshold: Double
-        ///Creates a closed range, e.g. 1991 - 2010 then map says
-        ///for each year in that rain, run thresholdSeason and collect the results into an array
+        threshold: Double,
+        field: ACISTemperatureField = .minimum,
+        comparison: ACISThresholdComparison = .lessThanOrEqual,
+        springEventChoice: ACISSeasonEventChoice = .last,
+        fallEventChoice: ACISSeasonEventChoice = .first
     ) -> [ACISThresholdSeason] {
         (startYear...endYear).map { year in
             thresholdSeason(
                 from: observations,
                 year: year,
-                threshold: threshold
+                threshold: threshold,
+                field: field,
+                comparison: comparison,
+                springEventChoice: springEventChoice,
+                fallEventChoice: fallEventChoice
             )
         }
     }
@@ -352,13 +421,21 @@ enum ACISThresholdCalculator {
         from observations: [ACISDailyObservation],
         startYear: Int,
         endYear: Int,
-        threshold: Double
+        threshold: Double,
+        field: ACISTemperatureField = .minimum,
+        comparison: ACISThresholdComparison = .lessThanOrEqual,
+        springEventChoice: ACISSeasonEventChoice = .last,
+        fallEventChoice: ACISSeasonEventChoice = .first
     ) -> ACISThresholdSummary {
         let seasons = thresholdSeasons(
             from: observations,
             startYear: startYear,
             endYear: endYear,
-            threshold: threshold
+            threshold: threshold,
+            field: field,
+            comparison: comparison,
+            springEventChoice: springEventChoice,
+            fallEventChoice: fallEventChoice
         )
         ///Look through all the yearly threshold seasons. Keep only the years where we found both
         ///a last spring freeze date and a first fall freeze date. Then count how many year survived.

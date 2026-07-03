@@ -34,11 +34,11 @@ struct ExportWeatherActionKey: FocusedValueKey {
 struct ShowForecastDiscussionActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
-/// Climate graph shortcut
+/// Climate graph shortcut Command + Shift + C
 struct ShowClimateGraphActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
-///Station selector shortcut
+///Station selector shortcut Com + Op + Number
 struct SelectLocationActionKey: FocusedValueKey {
     typealias Value = (WeatherLocation) -> Void
 }
@@ -46,7 +46,7 @@ struct SelectLocationActionKey: FocusedValueKey {
 struct ToggleDewPointActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
-
+///Heat index Command + Shift + H
 struct ToggleHeatIndexActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
@@ -393,6 +393,117 @@ enum ThresholdOutputMode: String, CaseIterable, Identifiable {
         }
     }
 }
+enum ThresholdEventMode: String, CaseIterable, Identifiable {
+    case coldNights
+    case warmAfternoon
+    case warmAfternoonLockIn
+    case mildNights
+    
+    var id: String {
+        rawValue
+    }
+    
+    var title: String {
+        switch self {
+        case .coldNights:
+            return "Cold Nights"
+        case .warmAfternoon:
+            return "Warm Afternoons" /// first occurence of a 50 degree day in spring
+        case .warmAfternoonLockIn:
+            return "Warm Afternoon Lock-In"
+        case .mildNights:
+            return "Mild Night Onset"
+        }
+    }
+    
+    var technicalLabel: String {
+        switch self {
+        case .coldNights:
+            return "Tmin <= threshold"
+        case .warmAfternoon:
+            return "Tmax >= threshold"
+        case .warmAfternoonLockIn:
+            return "Tmax < threshold"
+        case .mildNights:
+            return "Tmin >= threshold"
+        }
+    }
+    
+    var thresholdPresets: [Double] {
+        switch self {
+            ///answers last spring freeze/first fall freeze
+        case .coldNights:
+            return [20, 28, 32, 36, 40, 45]
+        case .warmAfternoon: ///first spring occurance of a 50 degree temperature
+            return [50, 60, 65, 70, 80, 90, 95, 100, 105, 110]
+        case .warmAfternoonLockIn: ///after this point, afternoons are expect to reach at least this temp
+            return [40, 45, 50, 55, 60, 65, 70, 75, 80]
+        case .mildNights: ///first night in spring that makes it above freezing. NOT the last freeze.
+            return [32, 36, 40, 45, 50, 55, 60]
+        }
+    }
+    
+    var field: ACISTemperatureField {
+        switch self {
+        case .coldNights, .mildNights:
+            return .minimum
+        case .warmAfternoon, .warmAfternoonLockIn:
+            return .maximum
+        }
+    }
+    
+    var comparison: ACISThresholdComparison {
+        switch self {
+        case .coldNights:
+            return .lessThanOrEqual
+        case .warmAfternoon, .mildNights:
+            return .greaterThanOrEqual
+        case .warmAfternoonLockIn:
+            return .lessThan
+        }
+    }
+
+    var springEventChoice: ACISSeasonEventChoice {
+        switch self {
+        case .coldNights:
+            return .last
+        case .warmAfternoon:
+            return .first
+        case .warmAfternoonLockIn:
+            return .last
+        case .mildNights:
+            return .first
+        }
+    }
+
+    var fallEventChoice: ACISSeasonEventChoice {
+        switch self {
+        case .coldNights:
+            return .first
+        case .warmAfternoon:
+            return .last
+        case .warmAfternoonLockIn:
+            return .first
+        case .mildNights:
+            return .last
+        }
+    }
+    
+    ///explains the thresholds
+    var explanation: String {
+        switch self {
+        case .coldNights:
+            return "After this point in spring, nights won't drop to OR below the threshold temperature until the fall."
+        case .warmAfternoon:
+            return "First occurence of a threshold temperature in Spring. Useful for cold climates like Fairbanks, AK since the first 50 degree day is welcomed after the long winter."
+        case .warmAfternoonLockIn:
+            return "By this point in spring, afternoons in summer usually always reach at least this high. For fall it is afternoons usually remain below x degrees until the following spring."
+        case .mildNights:
+            return "Spring shows the first mild night; e.g. the first April night that doesn't drop below freezing. This does NOT mean the last spring freeze. It is just spring knocking on the door."
+        }
+    }
+}
+
 ///the points themselves
 struct ThresholdRiskChartPoint: Identifiable {
     let threshold: Double
@@ -492,7 +603,9 @@ struct ContentView: View {
         wetBulb: 58.0,
         coolingPotential: 14.0,
         condition: "Unknown",
-        lastUpdated: "10:30 AM")
+        lastUpdated: "10:30 AM"
+    )
+    ///State variables are the core of the app
     @State private var selectedClimateGraph = ClimateGraphType.annualTemperatureCurve
     @State private var activeClimateGraph: ClimateGraphType?
     @State private var networkStatus = "Not requested yet"
@@ -1717,12 +1830,16 @@ struct ClimateGraphView: View {
     @State private var thresholdSummaryStatus = "Not loaded yet"
     /// loader function for climate data
     @State private var selectedThresholds: Set<Double> = [32.0]
+    @State private var selectedThresholdEventMode = ThresholdEventMode.coldNights
     @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
     @State private var thresholdOutputMode = ThresholdOutputMode.graph
     @State private var thresholdObservations: [ACISDailyObservation] = []
     
-    
-    private let thresholdPresets = [20.0, 28.0, 32.0, 36.0, 40.0, 45.0]
+    ///threshold buttons can change based on mode: cold nights, first/last warm afternoon, warm afternoon lock in, and
+    ///mild night onset.
+    private var thresholdPresets: [Double] {
+        selectedThresholdEventMode.thresholdPresets
+    }
     private func thresholdText(_ threshold: Double) -> String {
         threshold.formatted(.number.precision(.fractionLength(0)))
     }
@@ -1749,6 +1866,21 @@ struct ClimateGraphView: View {
         } else {
             selectedThresholds.insert(threshold)
         }
+    }
+    
+    private func resetThresholdsForSelectedMode() {
+        let presets = selectedThresholdEventMode.thresholdPresets
+        let stillValidThresholds = selectedThresholds.filter { threshold in            presets.contains(threshold)
+        }
+        ///select the first preset mode. The ?? 32.0 is fallback protection in case some
+        ///future mode accidentally has an empty preset list
+        if stillValidThresholds.isEmpty {
+            selectedThresholds = [presets.first ?? 32.0]
+        } else {
+            selectedThresholds = stillValidThresholds
+        }
+        ///updates the results using the new mode/thresholds
+        recalculateThresholdSummaries()
     }
     ///given the current mode, what data should I show?
     private func riskDateText(for riskPoint: ACISThresholdRiskPoint) -> String {
@@ -1781,7 +1913,8 @@ struct ClimateGraphView: View {
         }
     }
     
-    
+    ///One risk Point might contain: percent: 50 | springRiskDay: 133.0 (may 13) | fallRiskDay: 253.0 (Sep 10)
+    ///the chart will only draw one season at a time
     private func riskDay(for riskPoint: ACISThresholdRiskPoint) -> Double? {
         switch selectedThresholdRiskSeason {
         case .spring:
@@ -1804,14 +1937,21 @@ struct ClimateGraphView: View {
             from: DateComponents(year: 2001, day: roundedDay)
         )
     }
-    
+    ///This is a computed property, not a stored variable. Basically whenever someone asks for 'thresholdRiskChartPoints'
+    ///calculate and return an array of chart-ready points.
+    ///It transforms thresholdSummaries into a flat list the chart dan draw like: point: 32 F, 10%, May 21.
+    ///this function is a data-shaping bridge. It takes climate/scientific summary data and reshapes it into
+    ///a simple x,y, color-group chart points.
     private var thresholdRiskChartPoints: [ThresholdRiskChartPoint] {
+        ///The flatMap line means "for every selected threshold summary, produce chart points, then flatten them all into
+        ///one array.
         thresholdSummaries.flatMap { summary in
+            ///for each risk point, try to convert it into a chart point. if conversion fails, top.
             summary.thresholdRiskPoints.compactMap { riskPoint in
                 guard let date = dateFromDayOfYear(riskDay(for: riskPoint)) else {
                     return nil
                 }
-                
+                ///builds the actual point the chart can draw.
                 return ThresholdRiskChartPoint(
                     threshold: summary.threshold,
                     percent: riskPoint.percent,
@@ -1823,39 +1963,53 @@ struct ClimateGraphView: View {
             }
         }
     }
-    
+    ///Separate downloaded raw ACIS data from calculated threshold summaries
+    ///the first let statement says "If someone handed me fresh observations, use those. otherwise, use the observations
+    ///we already have saved in states.
+    ///
+    ///remember thresholdObservations have all daily minimum temperatures from 1991-2020. It is a huge array.
     private func recalculateThresholdSummaries(from observations: [ACISDailyObservation]? = nil) {
         let sourceObservations = observations ?? thresholdObservations
-        
+        ///If we have no ACIS daily rows yet, clear the summary list and stop.
         guard sourceObservations.isEmpty == false else {
             thresholdSummaries = []
             return
         }
-        
+        ///For every selected threshold (20, 28, 32, 36, 40) run the calculator five times. and produce
+        ///five ACISThresholdSummary value. The calculations change with the threshold
+        ///the raw data stays the same
         thresholdSummaries = sortedSelectedThresholds.map { threshold in
             ACISThresholdCalculator.thresholdSummary(
                 from: sourceObservations,
                 startYear: 1991,
                 endYear: 2020,
-                threshold: threshold
+                threshold: threshold,
+                field: selectedThresholdEventMode.field,
+                comparison: selectedThresholdEventMode.comparison,
+                springEventChoice: selectedThresholdEventMode.springEventChoice,
+                fallEventChoice: selectedThresholdEventMode.fallEventChoice
             )
         }
     }
+    ///async means the function is allowed to pause while waiting for network data.
+    ///basically go get ACIS data, save it, then calculate summary.
     private func loadThresholdSummary() async {
         isLoadingThresholdSummary = true
         thresholdSummaryStatus = "Loading ACIS threshold data..."
-        
+        ///run this later when the function is about to exit. because the function might succeed or fail.
         defer {
             isLoadingThresholdSummary = false
         }
-        ///climatology = 1991 to 2020.
+        ///climatology = 1991 to 2020. do blocks mean it starts a block of code that might throw an error.
+        ///let observations means use the selected locations ACIS ID, ask ACIS for daily observations
+        ///from Jan 1 1991 to Dec 31 2020 and wait for the result
         do {
             let observations = try await ACISClimateService.fetchDailyObservations(
                 stationID: location.acisStationID,
                 startDate: "1991-01-01",
                 endDate: "2020-12-31"
             )
-            
+            ///recalculatethresholdsummaries turns daw daily obs into useful threshold summaries.
             thresholdObservations = observations
             recalculateThresholdSummaries(from: observations)
             thresholdSummaryStatus = "Loaded \(observations.count) ACIS daily rows."
@@ -1990,8 +2144,8 @@ struct ClimateGraphView: View {
         )
     }
     
-    /// Tau(t) = 0.9 for thermal midsommar
-    /// Tau(t) =  0.1 for thermal midwinter
+    /// Tau(t) >= 0.9 for thermal midsommar
+    /// Tau(t) = or less than 0.1 for thermal midwinter
     private var thermalMidsommarWindow: ThermalWindow? {
         thermalWindow(threshold: 0.9, lookingForWarmWindow: true)
     }
@@ -2391,9 +2545,32 @@ struct ClimateGraphView: View {
             
             Text("Min temperature thresholds: \(selectedThresholdText), 1991-2020")
                 .foregroundStyle(.secondary)
+            ///mode picker UI
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Thermal event")
+                    .font(.headline)
+                
+                Picker("Thermal event", selection: $selectedThresholdEventMode) {
+                    ForEach(ThresholdEventMode.allCases) { mode in
+                        Text(mode.title)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: selectedThresholdEventMode) {
+                    resetThresholdsForSelectedMode()
+                }
+            }
+            Text(selectedThresholdEventMode.technicalLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            
+            Text(selectedThresholdEventMode.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Minimum temperature thresholds")
+                Text(" Temperature thresholds")
 
                 ForEach(thresholdPresets, id: \.self) { threshold in
                     let isSelected = selectedThresholds.contains(threshold)
