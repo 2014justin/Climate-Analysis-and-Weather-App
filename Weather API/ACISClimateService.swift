@@ -178,6 +178,120 @@ enum ACISDailyObservationMapper {
     }
 }
 
+enum WeatherYearCalculator {
+    private static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return calendar
+    }()
+    
+    private static func referenceDate(from date: Date) -> Date? {
+        let components = calendar.dateComponents([.month, .day], from: date)
+        
+        guard let month = components.month,
+              let day = components.day else {
+            return nil
+        }
+        
+        if month == 2 && day == 29 {
+            return nil
+        }
+        
+        return calendar.date(
+            from: DateComponents(year: 2001, month: month, day: day)
+        )
+    }
+    
+    private static func referenceDayOfYear(from date: Date) -> Int? {
+        guard let referenceDate = referenceDate(from: date) else {
+            return nil
+        }
+        
+        return calendar.ordinality(of: .day, in: .year, for: referenceDate)
+    }
+    
+    static func weatherYearDays(
+        from observations: [ACISDailyObservation],
+        selectedYear: Int,
+        location: WeatherLocation
+    ) -> [WeatherYearDay] {
+        var observationsByDay: [Int: [ACISDailyObservation]] = [:]
+        var selectedYearObservationsByDay: [Int: ACISDailyObservation] = [:]
+        
+        for observation in observations {
+            guard let dayOfYear = referenceDayOfYear(from: observation.date) else {
+                continue
+            }
+            
+            observationsByDay[dayOfYear, default: []].append(observation)
+            
+            if calendar.component(.year, from: observation.date) == selectedYear {
+                selectedYearObservationsByDay[dayOfYear] = observation
+            }
+        }
+        
+        let startDate = calendar.date(
+            from: DateComponents(year: 2001, month:1, day: 1)
+        )!
+        
+        return(1...365).compactMap { dayOfYear in
+            guard let date = calendar.date(
+                byAdding: .day,
+                value: dayOfYear - 1,
+                to: startDate
+            ) else {
+                return nil
+            }
+            
+            let dayObservations = observationsByDay[dayOfYear] ?? []
+            let selectedObservation = selectedYearObservationsByDay[dayOfYear]
+            
+            let minimumTemperatures = dayObservations.compactMap { observation in
+                observation.minimumTemperature
+            }
+            
+            let maximumTemperatures = dayObservations.compactMap { observation in
+                observation.maximumTemperature
+            }
+            
+            return WeatherYearDay(
+                dayOfYear: dayOfYear,
+                date: date,
+                selectedYearMinimum: selectedObservation?.minimumTemperature,
+                selectedYearMaximum: selectedObservation?.maximumTemperature,
+                normalLow: WeatherAlmanac.normalLowFahrenheit(
+                    dayOfYear: dayOfYear,
+                    profile: location.climatologyProfile
+                ),
+                normalHigh: WeatherAlmanac.normalHighFahrenheit(
+                    dayOfYear: dayOfYear,
+                    profile: location.climatologyProfile
+                ),
+                recordLowMinimum: minimumTemperatures.min(),
+                recordHighMaximum: maximumTemperatures.max(),
+                recordWarmMinimum: minimumTemperatures.max(),
+                recordCoolMaximum: maximumTemperatures.min(),
+                sampleCount: dayObservations.count
+            )
+        }
+    }
+    
+    static func recordInfo(from observations: [ACISDailyObservation]) -> WeatherYearRecordInfo {
+        let years = Set(
+            observations.map { observation in
+                calendar.component(.year, from: observation.date)
+            }
+        )
+        
+        return WeatherYearRecordInfo(
+            startDate: observations.map { $0.date }.min(),
+            endDate: observations.map { $0.date }.max(),
+            rowCount: observations.count,
+            representedYearCount: years.count
+        )
+    }
+}
+
 ///This asks ACIS for daily station data and returns ACISDailyObservation
 enum ACISClimateService {
     static func fetchDailyObservations(

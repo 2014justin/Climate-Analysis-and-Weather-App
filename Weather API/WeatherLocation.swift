@@ -1,5 +1,5 @@
 import Foundation
-
+///each of the cases our code considers. Just look up the station ID, forecast discussion, and ACIS climate code.
 enum ClimatologyProfile: String, Hashable {
     case northLasVegas
     case fairbanks
@@ -40,6 +40,8 @@ extension WeatherLocation {
         acisStationID: "KVGT"
     )
     /// Here is Fairbanks, AK
+    /// flooding data?
+    /// 
     static let fairbanks = WeatherLocation(
         id: "fairbanks",
         name: "Fairbanks, AK",
@@ -133,6 +135,10 @@ extension WeatherLocation {
         timeZoneIdentifier: "America/Los_Angeles",
         acisStationID: "KLGB"
     )
+    ///Next station goes under here:
+    
+    
+    
     static let allLocations: [WeatherLocation] = [
         .northLasVegas,
         .fairbanks,

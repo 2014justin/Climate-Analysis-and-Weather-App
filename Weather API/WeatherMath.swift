@@ -40,6 +40,7 @@ enum WeatherMath {
         }
         return roundedDown
     }
+    ///base 5 logic for y-axis scaling
     
     static func upperChartBound(for value: Double) -> Double {
         let roundedUp = ceil(value / 5.0) * 5.0
@@ -87,6 +88,7 @@ enum WeatherMath {
             )
             
             heatIndex -= adjustment
+            ///use this for humid climates.
         } else if relativeHumidity > 85.0,
                   temperature >= 80.0,
                   temperature <= 87.0 {
