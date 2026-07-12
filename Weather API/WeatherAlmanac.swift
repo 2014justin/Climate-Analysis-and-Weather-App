@@ -683,6 +683,91 @@ enum WeatherAlmanac {
             return longBeachNormalizedSolarEnergy(dayOfYear: t)
         }
     }
+    ///extraterrestrial Solar Energy used for adding new stations
+    static func eTSolarEnergy(
+        dayOfYear t: Double,
+        latitude: Double
+    ) -> Double {
+        let degreesToRadians = Double.pi / 180.0
+        let latitudeRadians = latitude * degreesToRadians
+        
+        let solarConstant = 0.0820 /// in MJ/m^2/min to be converted to kWh/m^2/day later
+        let dayAngle = 2.0 * Double.pi * t / 365.0
+        
+        let inverseEarthSunDistance = 1.0 + 0.033 * cos(dayAngle)
+        let solarDeclination = 0.409 * sin(dayAngle - 1.39)
+        
+        let sunsetHourAngleInput = -tan(latitudeRadians) * tan(solarDeclination)
+        let sunsetHourAngle: Double
+        
+        if sunsetHourAngleInput <= -1.0 {
+            sunsetHourAngle = Double.pi
+        } else if sunsetHourAngleInput >= 1.0 {
+            sunsetHourAngle = 0.0
+        } else {
+            sunsetHourAngle = acos(sunsetHourAngleInput)
+        }
+        
+        let dailySolarMJ = (24.0 * 60.0 / Double.pi)
+            * solarConstant
+            * inverseEarthSunDistance
+            * (
+                sunsetHourAngle * sin(latitudeRadians) * sin(solarDeclination)
+                + cos(latitudeRadians) * cos(solarDeclination) * sin(sunsetHourAngle)
+            )
+        
+        return max(0.0, dailySolarMJ / 3.6) ///choose max because S(t) might be 0 in high latitudes in December
+    }
+    
+    ///Function overloading Solar Energy. This one takes date as an Int. Conveniece wrapper for integer DoY calls
+    static func eTSolarEnergy(
+        dayOfYear t: Int,
+        latitude: Double
+    ) -> Double {
+        eTSolarEnergy(
+            dayOfYear: Double(t),
+            latitude: latitude
+        )
+    }
+    
+    ///Normalized solar energy s(t)
+    static func normalizedETSolarEnergy(
+        dayOfYear t: Double,
+        latitude: Double
+    ) -> Double {
+        let annualSolarValues = (1...365).map { day in
+            eTSolarEnergy(
+                dayOfYear: Double(day),
+                latitude: latitude
+            )
+        }
+        
+        guard let lowestSolar = annualSolarValues.min(),
+                let highestSolar = annualSolarValues.max(),
+                highestSolar > lowestSolar else {
+            return 0.0
+        }
+        
+        let solarEnergy = eTSolarEnergy(
+            dayOfYear: t,
+            latitude: latitude
+        )
+        ///Normalizes S(t) -> s(t) by [S(t) - S min]/[S max - S min]
+        return (solarEnergy - lowestSolar) / (highestSolar - lowestSolar)
+    }
+    
+    ///Conveniece wrapper for integer DoY calls
+    static func normalizedETSolarEnergy(
+        dayOfYear t: Int,
+        latitude: Double
+    ) -> Double {
+        normalizedETSolarEnergy(
+            dayOfYear: Double(t),
+            latitude: latitude
+        )
+    }
+    
+    ///Sunset and sunrise times computed astronomically for a location.
     static func sunTimes(
         for date: Date = Date(),
         latitude: Double,

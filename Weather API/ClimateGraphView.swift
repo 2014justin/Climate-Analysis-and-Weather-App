@@ -1,4 +1,6 @@
-///show climate graph content.
+///Bread and butter for graphical climatology. The graphs tell a farmer or hydrologist everything they need
+///to know from first and last freeze dates, to the date of the year that is usually thermal midsommar. This data
+///has huge use for any profession that relies on climatology.
 
 import SwiftUI
 import Charts
@@ -7,6 +9,9 @@ import AppKit
 struct ClimateGraphView: View {
     @Binding var graphType: ClimateGraphType
     let location: WeatherLocation
+    
+    ///Adds stored climate points
+    private let climatePoints: [ClimateDayPoint]
     @State private var keyMonitor: Any?
     @State private var selectedClimatePoint: ClimateDayPoint?
     ///holds the calculated ACIS result
@@ -35,6 +40,27 @@ struct ClimateGraphView: View {
     ]
     ///which station the current ACIS rows belong to
     @State private var loadedACISStationID: String?
+    
+    ///Initializer for climate points. This caches the 365 climatepoints once ClimateGraphView opens, in stead of rebuilding
+    ///them every time SwiftUI redraws the hysteresis chart.
+    init(
+        graphType: Binding<ClimateGraphType>,
+        location: WeatherLocation
+    ) {
+        
+        ///Because graphType is an @Binding, Swift stores the actual wrapper as  graphType.
+        self._graphType = graphType
+        self.location = location
+        self.climatePoints = (1...365).map { day in
+            ClimateDayPoint(
+                dayOfYear: day,
+                normalHigh: location.normalHigh(dayOfYear: day),
+                normalLow: location.normalLow(dayOfYear: day),
+                solarEnergy: location.solarEnergy(dayOfYear: day),
+                normalizedSolar: location.normalizedSolarEnergy(dayOfYear: day)
+            )
+        }
+    }
     
     ///threshold buttons can change based on mode: cold nights, first/last warm afternoon, warm afternoon lock in, and
     ///mild night onset.
@@ -353,38 +379,16 @@ struct ClimateGraphView: View {
     
     @Environment(\.dismiss) private var dismiss
     
-    /// Make 365 data points for each day of the year, reference the climate data in
-    /// WeatherAlamanc.swift, and make a climate graph for the user's viewing pleasure.
-    private var climatePoints: [ClimateDayPoint] {
-        (1...365).map { day in
-            ClimateDayPoint(
-                dayOfYear: day,
-                normalHigh: WeatherAlmanac.normalHighFahrenheit(
-                    dayOfYear: day,
-                    profile: location.climatologyProfile
-                ),
-                normalLow: WeatherAlmanac.normalLowFahrenheit(
-                    dayOfYear: day,
-                    profile: location.climatologyProfile
-                ),
-                solarEnergy: WeatherAlmanac.solarEnergy(
-                    dayOfYear: day,
-                    profile: location.climatologyProfile
-                ),
-                normalizedSolar: WeatherAlmanac.normalizedSolarEnergy(
-                    dayOfYear: day,
-                    profile: location.climatologyProfile
-                )
-            )
-        }
-    }
     /// Indexes all 365 climate points and finds where the normal low is highest.
     private var peakNormalLowPoint: ClimateDayPoint? {
         climatePoints.max {first, second in
             first.normalLow < second.normalLow
         }
     }
-    ///Define Tau(t)
+    
+    ///Define Tau(t), dimensionless tempertaure we can use to determine where a climatological date is in the season.
+    ///For example, Tau(t) = .90 gives the top 10% of morning low temperatures. This is a strong signal the location is
+    ///experiencing high thermal midsommar.
     private func thermalWindow(threshold: Double, lookingForWarmWindow: Bool) -> ThermalWindow? {
         let lows = climatePoints.map { point in
             point.normalLow
@@ -487,29 +491,34 @@ struct ClimateGraphView: View {
         closestToNormalizedSolar hoveredSolar: Double,
         normalLow hoveredNormalLow: Double
     ) -> ClimateDayPoint? {
-        let xRange = 1.2
-        let yRange = hysteresisTemperatureDomain.upperBound - hysteresisTemperatureDomain.lowerBound
-        
-        guard yRange > 0 else {
+        let points = climatePoints
+
+        let lowTemperatures = points.map { point in
+            point.normalLow
+        }
+
+        guard let minimumTemperature = lowTemperatures.min(),
+              let maximumTemperature = lowTemperatures.max(),
+              maximumTemperature > minimumTemperature else {
             return nil
         }
-        
-        return climatePoints.min { first, second in
-            ///Calculate how hoveredSolar differs from normalized solar, and normalize or divide by the xRange
+
+        let xRange = 1.2
+        let yRange = maximumTemperature - minimumTemperature
+
+        return points.min { first, second in
             let firstSolarDistance = (first.normalizedSolar - hoveredSolar) / xRange
             let firstTemperatureDistance = (first.normalLow - hoveredNormalLow) / yRange
-            
+
             let secondSolarDistance = (second.normalizedSolar - hoveredSolar) / xRange
             let secondTemperatureDistance = (second.normalLow - hoveredNormalLow) / yRange
-            ///Normalizing by chart range is necessary because s(t) goes from 0 to 1, while temperature might
-            ///have an amplitude of 50 degrees or morel.
-            ///Almost like a metric tensor square. g uu, or g vv.
-            ///We do not need the square root because if a^2 is less than b^2 then a is less than b.
+
             let firstDistanceSquared =
                 firstSolarDistance * firstSolarDistance + firstTemperatureDistance * firstTemperatureDistance
-            
+
             let secondDistanceSquared =
                 secondSolarDistance * secondSolarDistance + secondTemperatureDistance * secondTemperatureDistance
+
             return firstDistanceSquared < secondDistanceSquared
         }
     }
@@ -1441,10 +1450,16 @@ struct ClimateGraphView: View {
                         return
                     }
                     
-                    selectedClimatePoint = hysteresisPoint(
+                    let hoveredPoint = hysteresisPoint(
                         closestToNormalizedSolar: hoveredSolar,
                         normalLow: hoveredNormalLow
                     )
+
+                    guard selectedClimatePoint?.dayOfYear != hoveredPoint?.dayOfYear else {
+                        return
+                    }
+
+                    selectedClimatePoint = hoveredPoint
                 },
                 onEnded: {
                     selectedClimatePoint = nil
@@ -1508,7 +1523,7 @@ struct ClimateGraphView: View {
                 }
             }
             
-            Text("Selected overlays: \(selectedWeatherYearOverlays.map { $0.title }.sorted().joined(separator: ", "))")
+            
 
             if weatherYearDays.isEmpty {
                 Text("Weather-year data is loading...")
@@ -1732,7 +1747,7 @@ struct ClimateGraphView: View {
         .chartYAxis {
             AxisMarks(position: .trailing, values: .stride(by: 10))
         }
-        .frame(height: 420)
+        .frame(height: 480)
     }
     
     private var weatherYearTemperatureDomain: ClosedRange<Double> {
@@ -1754,8 +1769,8 @@ struct ClimateGraphView: View {
             return 0...120
         }
         
-        let lowerBound = floor((minimum - 5) / 10) * 10
-        let upperBound = ceil((maximum + 5) / 10) * 10
+        let lowerBound = floor((minimum - 0) / 10) * 10
+        let upperBound = ceil((maximum + 0) / 10) * 10
         
         return lowerBound...upperBound
     }

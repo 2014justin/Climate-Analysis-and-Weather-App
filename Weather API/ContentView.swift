@@ -403,6 +403,29 @@ struct ContentView: View {
     @State private var isShowingForecastDiscussion = false
     @State private var isLoadingForecastDiscussion = false
     @State private var selectedLocation = WeatherLocation.northLasVegas
+    @State private var isShowingStationAdder = false
+    @State private var isShowingStationRemovalConfirmation = false
+    @State private var isBuildingGeneratedClimateProfile = false
+    @State private var savedGeneratedStations: [SavedGeneratedStation] = []
+    
+    /// Converts persistent station records into locations the picker can display.
+    private var customLocations: [WeatherLocation] {
+        savedGeneratedStations.map { savedStation in
+            WeatherLocation.generated(from: savedStation)
+        }
+    }
+    
+    /// Combines built-in locations with user-created locations
+    private var availableLocations: [WeatherLocation] {
+        WeatherLocation.allLocations + customLocations
+    }
+    
+    /// Returns a saved station only when the current selected station is in view.
+    private var selectedSavedGeneratedStation: SavedGeneratedStation? {
+        savedGeneratedStations.first { savedStation in
+            savedStation.id == selectedLocation.id
+        }
+    }
     
     /// Adds daylight phase logic to tint app background as a function of time of day.
     private var daylightPhase: DaylightPhase {
@@ -432,34 +455,11 @@ struct ContentView: View {
         
         return .night
     }
-    /// App shading logic for sunrise, day, sunset, and night
+    /// Navy background
     private var dashboardGradientColors: [Color] {
-        switch daylightPhase {
-        case .sunrise:
-            return [
-                Color(red: 0.42, green: 0.34, blue: 0.48),
-                Color(red: 0.72, green: 0.50, blue: 0.45),
-                Color(red: 0.88, green: 0.67, blue: 0.50)
-            ]
-        case .day:
-            return [
-                Color(red: 0.18, green: 0.28, blue: 0.34),
-                Color(red: 0.25, green: 0.36, blue: 0.42),
-                Color(red: 0.42, green: 0.36, blue: 0.36)
-            ]
-        case .sunset:
-            return [
-                Color(red: 0.22, green: 0.24, blue: 0.38),
-                Color(red: 0.52, green: 0.35, blue: 0.43),
-                Color(red: 0.76, green: 0.48, blue: 0.34)
-            ]
-        case .night:
-            return [
-                Color(red: 0.02, green: 0.04, blue: 0.10),
-                Color(red: 0.04, green: 0.07, blue: 0.16),
-                Color(red: 0.08, green: 0.09, blue: 0.18)
-            ]
-        }
+        DashboardTheme.backgroundColors(
+            for: daylightPhase
+        )
     }
     /// Adds stars or starry background
     /// Can 
@@ -503,18 +503,52 @@ struct ContentView: View {
             Text("Weather Dashboard")
                 .font(.largeTitle)
             /// Gives the application a text identifying itself as a 'weather dashboard'
-            Picker("Location", selection: $selectedLocation) {
-                ForEach(WeatherLocation.allLocations) { location in
-                    Text(location.name)
-                        .tag(location)
+            HStack(spacing: 8) {
+                Picker("Location", selection: $selectedLocation) {
+                    ForEach(availableLocations) { location in
+                        Text(location.name)
+                            .tag(location)
+                    }
                 }
-            }
-            .pickerStyle(.menu)
-            .onChange(of: selectedLocation) {
-                Task {
-                    await refreshWeather()
+                .pickerStyle(.menu)
+                .onChange(of: selectedLocation) {
+                    Task {
+                        await refreshWeather()
+                    }
                 }
+                
+                Menu {
+                    Button {
+                        isShowingStationAdder = true
+                    } label: {
+                        Label("Add Station...", systemImage: "plus")
+                    }
+                    
+                    Divider()
+                    
+                    Button(role: .destructive) {
+                        isShowingStationRemovalConfirmation = true
+                    } label: {
+                        Label("Remove Current Location...", systemImage: "trash")
+                    }
+                    .disabled(selectedSavedGeneratedStation == nil)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Color.blue)
+                        )
+                }
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Manage stations")
             }
+            .controlSize(.large)
+            
             Text("Station: \(selectedLocation.displayStationID)")
                 .font(.headline)
 
@@ -562,10 +596,17 @@ struct ContentView: View {
                     selectedClimateGraph = .thresholdSeasons
                     activeClimateGraph = .thresholdSeasons
                 }
+                
+                ///Weather year button
+                Button("Show Weather Year Graph") {
+                    selectedClimateGraph = .weatherForTheYear
+                    activeClimateGraph = .weatherForTheYear
+                }
             }
             .buttonStyle(.borderedProminent)
             .tint(.blue)
 
+            ///Network status
             Text(networkStatus)
                 .foregroundStyle(.secondary)
 
@@ -575,15 +616,107 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
     }
+    
+    /// Gives current conditions a nice card.
     private var leftDashboardPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            currentConditionsGrid
+            dashboardCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Current Conditions")
+                        .font(.headline)
+                    
+                    currentConditionsGrid
+                }
+            }
             
-            Divider()
-            
-            almanacGrid
+            dashboardCard {
+                almanacGrid
+            }
+        }
+        .foregroundStyle(DashboardTheme.textPrimary)
+        .frame(width: 365)
+    }
+    
+    /// Provides one consistent surface for dashboard information groups.
+    private func dashboardCard<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(14)
+            .frame(
+                maxWidth: .infinity,
+                alignment: .leading
+            )
+            .background(DashboardTheme.panel)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: DashboardTheme.cardCornerRadius
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: DashboardTheme.cardCornerRadius
+                )
+                .stroke(DashboardTheme.border, lineWidth: 1)
+            }
+        
+    }
+    
+    /// Load Generated Stations
+    private func loadGeneratedStations() {
+        do {
+            savedGeneratedStations = try GeneratedStationStore.load()
+        } catch {
+            networkStatus = "Saved stations could not be loaded: \(error.localizedDescription)"
         }
     }
+    
+    /// Save generated station and remove duplicate stations
+    private func saveGeneratedStation(_ result: GeneratedStationBuildResult) {
+        let savedStation = SavedGeneratedStation(result: result)
+        
+        var updatedStations = savedGeneratedStations.filter {
+            $0.id != savedStation.id
+        }
+        
+        updatedStations.append(savedStation)
+        
+        do {
+            try GeneratedStationStore.save(updatedStations)
+            
+            savedGeneratedStations = updatedStations
+            selectedLocation = WeatherLocation.generated(from: savedStation)
+            
+            Task {
+                await refreshWeather()
+            }
+        } catch {
+            networkStatus = "Station could not be saved: \(error.localizedDescription)"
+        }
+    }
+    
+    /// Removes only a user-created station and updates persistent storage.
+    private func removeSelectedGeneratedStation() {
+        guard let stationToRemove = selectedSavedGeneratedStation else {
+            return
+        }
+        
+        let updatedStations = savedGeneratedStations.filter {
+            $0.id != stationToRemove.id
+        }
+        
+        do {
+            try GeneratedStationStore.save(updatedStations)
+            
+            selectedLocation = .northLasVegas
+            savedGeneratedStations = updatedStations
+            networkStatus = "\(stationToRemove.name) was removed."
+        } catch {
+            networkStatus = "Station could not be removed: \(error.localizedDescription)"
+        }
+                
+    }
+    
     ///Make the Almanac and live weather conditions lined up properly.
     private func dashboardRow(label: String, value: String, unit: String = "") -> some View {
         GridRow {
@@ -674,24 +807,14 @@ struct ContentView: View {
     private var almanacGrid: some View {
         let today = WeatherAlmanac.dayOfYear()
 
-        let normalHigh = WeatherAlmanac.normalHighFahrenheit(
-            dayOfYear: today,
-            profile: selectedLocation.climatologyProfile
-        )
+        let normalHigh = selectedLocation.normalHigh(dayOfYear: today)
 
-        let normalLow = WeatherAlmanac.normalLowFahrenheit(
-            dayOfYear: today,
-            profile: selectedLocation.climatologyProfile
-        )
-        let solarEnergy = WeatherAlmanac.solarEnergy(
-            dayOfYear: today,
-            profile: selectedLocation.climatologyProfile
-        )
+        let normalLow = selectedLocation.normalLow(dayOfYear: today)
 
-        let solarIndex = WeatherAlmanac.normalizedSolarEnergy(
-            dayOfYear: today,
-            profile: selectedLocation.climatologyProfile
-        )
+        let solarEnergy = selectedLocation.solarEnergy(dayOfYear: today)
+
+        let solarIndex = selectedLocation.normalizedSolarEnergy(dayOfYear: today)
+        
         let sunTimes = WeatherAlmanac.sunTimes(
             latitude: selectedLocation.latitude,
             longitude: selectedLocation.longitude
@@ -744,13 +867,14 @@ struct ContentView: View {
     
     private var temperatureChart: some View {
         Chart {
+            /// Live, future, and past air Temperature
             ForEach(temperatureHistory) { point in /// point is the temporary name for the current item in the loop
                 LineMark(
                     x: .value("Time", point.timestamp), /// time goes to 'x' axis.
                     y: .value("Temperature", point.temperatureFahrenheit), /// Temperature goes to 'y' axis.
                     series: .value("Series", "Observed")
                 )
-                .foregroundStyle(.blue)
+                .foregroundStyle(DashboardTheme.observedTemperature)
             }
             /// If shows dew point, show the graph.
             if isShowingDewPoint {
@@ -761,7 +885,7 @@ struct ContentView: View {
                             y: .value("Dew Point", dewPointFahrenheit),
                             series: .value("Series", "Dew Point")
                         )
-                        .foregroundStyle(.black)
+                        .foregroundStyle(DashboardTheme.dewPoint)
                         .lineStyle(StrokeStyle(lineWidth: 2.0))
                     }
                 }
@@ -775,7 +899,7 @@ struct ContentView: View {
                             y: .value("Heat Index", heatIndexFahrenheit),
                             series: .value("Series", "Heat Index")
                         )
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(DashboardTheme.heatIndex)
                         .lineStyle(StrokeStyle(lineWidth: 2.0))
                     }
                 }
@@ -787,7 +911,7 @@ struct ContentView: View {
                     y: .value("Temperature", point.temperatureFahrenheit),
                     series: .value("Series", "Forecast")
                 )
-                .foregroundStyle(.cyan.opacity(0.75)) /// light blue & dashed to make it obviously stand out to weather that has already happened.
+                .foregroundStyle(DashboardTheme.forecastTemperature) /// light blue & dashed to make it obviously stand out to weather that has already happened.
                 .lineStyle(StrokeStyle(lineWidth: 2.5, dash: [7, 4]))
             }
             /// Forecast dew points as grey dashed line
@@ -799,7 +923,7 @@ struct ContentView: View {
                             y: .value("Forecast Dew Point", dewPointFahrenheit),
                             series: .value("Series", "Forecast Dew Point")
                         )
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(DashboardTheme.dewPoint.opacity(0.60))
                         .lineStyle(StrokeStyle(lineWidth: 2.0, dash: [7,4]))
                     }
                 }
@@ -813,7 +937,7 @@ struct ContentView: View {
                             y: .value("Forecast Heat Index", heatIndexFahrenheit),
                             series: .value("Series", "Forecast Heat Index")
                         )
-                        .foregroundStyle(.purple.opacity(0.55))
+                        .foregroundStyle(DashboardTheme.heatIndex.opacity(0.60))
                         .lineStyle(StrokeStyle(lineWidth: 2.0, dash: [7, 4]))
                     }
                 }
@@ -836,14 +960,14 @@ struct ContentView: View {
                     x: .value("Selected Time", selectedTemperaturePoint.timestamp),
                     y: .value("Selected Temperature", selectedTemperaturePoint.temperatureFahrenheit)
                 )
-                .foregroundStyle(.blue)
+                .foregroundStyle(DashboardTheme.observedTemperature)
                 .symbolSize(80)
                 .annotation(position: .top) {
                     chartHoverTooltip(
                         label: "Temperature",
                         value: selectedTemperaturePoint.temperatureFahrenheit,
                         timestamp: selectedTemperaturePoint.timestamp,
-                        color: .blue
+                        color: DashboardTheme.observedTemperature
                     )
                 }
                 ///Adds a nice solid black dot over dew points
@@ -853,14 +977,14 @@ struct ContentView: View {
                         x: .value("Selected Dew Point Time", selectedTemperaturePoint.timestamp),
                         y: .value("Selected Dew Point", dewPointFahrenheit)
                     )
-                    .foregroundStyle(.black)
+                    .foregroundStyle(DashboardTheme.dewPoint)
                     .symbolSize(80)
                     .annotation(position: .top) {
                         chartHoverTooltip(
                             label: "Dew Point",
                             value: dewPointFahrenheit,
                             timestamp: nil,
-                            color: .black
+                            color: DashboardTheme.dewPoint
                         )
                     }
                 }
@@ -871,37 +995,45 @@ struct ContentView: View {
                         x: .value("Selected Heat Index Time", selectedTemperaturePoint.timestamp),
                         y: .value("Selected Heat Index", heatIndexFahrenheit)
                     )
-                    .foregroundStyle(.pink)
+                    .foregroundStyle(DashboardTheme.heatIndex)
                     .symbolSize(80)
                     .annotation(position: .bottom) {
                         chartHoverTooltip(
                             label: "Heat Index",
                             value: heatIndexFahrenheit,
                             timestamp: nil,
-                            color: .pink
+                            color: DashboardTheme.heatIndex
                         )
                     }
                 }
             }
         }
         .frame(width: 860, height: 350)
-        .foregroundStyle(.black)
+        .foregroundStyle(DashboardTheme.textPrimary)
         .padding(16)
         .padding(.top, 28)
-        .background(.white)
+        .background(DashboardTheme.panel)
         .clipShape(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(
+                cornerRadius: DashboardTheme.cardCornerRadius
+            )
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(.gray.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(
+                cornerRadius: DashboardTheme.cardCornerRadius
+            )
+            .stroke(DashboardTheme.border, lineWidth: 1)
         }
         .overlay(alignment: .topLeading) {
             Text("Temperature History")
                 .font(.headline)
-                .foregroundStyle(.black)
+                .foregroundStyle(DashboardTheme.textPrimary)
                 .padding(.leading, 16)
                 .padding(.top, 14)
+        }
+        .chartPlotStyle { plotArea in
+            plotArea
+                .background(DashboardTheme.plotArea)
         }
         
         .chartYScale(domain: chartTemperatureDomain)
@@ -909,11 +1041,11 @@ struct ContentView: View {
         .chartYAxis {
             AxisMarks(values: .stride(by: 5)) {
                 AxisGridLine()
-                    .foregroundStyle(.gray.opacity(0.35))
+                    .foregroundStyle(DashboardTheme.border)
                 AxisTick()
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(DashboardTheme.textSecondary)
                 AxisValueLabel()
-                    .foregroundStyle(.black)
+                    .foregroundStyle(DashboardTheme.textSecondary)
             }
         }
         /// This makes it so if 72 hours is selected, the x axis doesn't have labeled tick marks every 3 pixels so it looks fucked up. spaced more out
@@ -921,9 +1053,9 @@ struct ContentView: View {
         .chartXAxis {
             AxisMarks(values: .stride(by: .hour, count: chartXAxisHourStride)) { value in
                 AxisGridLine()
-                    .foregroundStyle(.gray.opacity(0.2))
+                    .foregroundStyle(DashboardTheme.border)
                 AxisTick()
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(DashboardTheme.textSecondary)
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
                         let previousTick = date.addingTimeInterval(
@@ -940,10 +1072,10 @@ struct ContentView: View {
                                 date.formatted(.dateTime.month(.abbreviated).day())
                                     .uppercased()
                             )
-                            .foregroundStyle(.black)
+                            .foregroundStyle(DashboardTheme.textSecondary)
                         } else {
                             Text(date.formatted(.dateTime.hour(.defaultDigits(amPM: .abbreviated))))
-                                .foregroundStyle(.black)
+                                .foregroundStyle(DashboardTheme.textSecondary)
                         }
                     }
                 }
@@ -975,23 +1107,28 @@ struct ContentView: View {
                 Menu {
                     Label("Temperature", systemImage: "checkmark")
                         .disabled(true)
-                    
+
                     Toggle("Dew Point", isOn: $isShowingDewPoint)
                     Toggle("Heat Index", isOn: $isShowingHeatIndex)
                 } label: {
                     HStack(spacing: 4) {
                         Text("Meteorological Values")
+
                         Image(systemName: "chevron.down")
                             .font(.caption2)
                     }
                     .font(.caption)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(DashboardTheme.textPrimary)
                 }
+
                 Text("History")
                     .font(.caption)
-                    .foregroundStyle(.black)
-                
-                Picker("History Duration", selection: $selectedHistoryDuration) {
+                    .foregroundStyle(DashboardTheme.textSecondary)
+
+                Picker(
+                    "History Duration",
+                    selection: $selectedHistoryDuration
+                ) {
                     ForEach(HistoryDuration.allCases) { duration in
                         Text(duration.label)
                             .tag(duration)
@@ -999,21 +1136,21 @@ struct ContentView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .environment(\.colorScheme, .light)
-                .tint(.blue)
-                .foregroundStyle(.black)
+                .tint(DashboardTheme.observedTemperature)
+                .foregroundStyle(DashboardTheme.textPrimary)
                 .frame(width: 110)
             }
+            .environment(\.colorScheme, .dark)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(.gray.opacity(0.12))
+            .background(DashboardTheme.panelElevated)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay {
                 RoundedRectangle(cornerRadius: 7)
-                    .stroke(.gray.opacity(0.35), lineWidth: 1)
+                    .stroke(DashboardTheme.border, lineWidth: 1)
             }
             .padding(.top, 8)
-            .padding(.trailing, 12)
+            .padding(.trailing, 64)
         }
     }
     ///Displays temperature neatly as a point floating above the graph. Does it for air temp, dew point, and heat index.
@@ -1025,20 +1162,34 @@ struct ContentView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             if let timestamp {
-                Text(timestamp.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text(
+                    timestamp.formatted(
+                        date: .abbreviated,
+                        time: .shortened
+                    )
+                )
+                .font(.caption2)
+                .foregroundStyle(DashboardTheme.textSecondary)
             }
-            
+
             Text("\(label): \(String(format: "%.1f", value)) °F")
                 .font(.caption)
                 .fontWeight(.bold)
                 .foregroundStyle(color)
         }
         .padding(6)
-        .background(.white.opacity(0.95))
+        .background(DashboardTheme.panelElevated.opacity(0.98))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .shadow(radius: 3)
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+        }
+        .shadow(
+            color: .black.opacity(0.35),
+            radius: 6,
+            x: 0,
+            y: 2
+        )
     }
     
     ///Daytime = day color gradient. Sunrise/set = sunset color gradient. Night = starry night background.
@@ -1064,6 +1215,10 @@ struct ContentView: View {
                     alignment: .topLeading
                 )
         }
+            /// Load the user-created stations.
+            .task {
+                loadGeneratedStations()
+            }
             /// Focused Scene value for File. Refresh Weather
             .focusedSceneValue(\.refreshWeather) {
                 Task {
@@ -1130,6 +1285,27 @@ struct ContentView: View {
                     location: selectedLocation
                 )
             }
+            .alert(
+                "Remove Current Location?",
+                isPresented: $isShowingStationRemovalConfirmation
+            ) {
+                Button("Cancel", role: .cancel) {
+                    
+                }
+                
+                Button("Remove", role: .destructive) {
+                    removeSelectedGeneratedStation()
+                }
+            } message: {
+                Text(
+                    "Remove \(selectedSavedGeneratedStation?.name ?? "this location") from your saved stations?"
+                )
+            }
+            .sheet(isPresented: $isShowingStationAdder) {
+                StationAdderView { result in
+                    saveGeneratedStation(result)
+                }
+            }
     }
     private var allTemperatureChartPoints: [TemperaturePoint] {
         let combinedPoints = temperatureHistory + temperatureForecast
@@ -1164,16 +1340,26 @@ struct ContentView: View {
         return start...end
     }
     private var chartTemperatureDomain: ClosedRange<Double> {
-        var visibleTemperatures = (temperatureHistory + temperatureForecast).map {
+        let visiblePoints = allTemperatureChartPoints
+        
+        var visibleTemperatures = visiblePoints.map {
             $0.temperatureFahrenheit
         }
-        /// Considers dew point when drawing the y-axis tickmarks/range
+        
         if isShowingDewPoint {
-            let visibleDewPoints = (temperatureHistory + temperatureForecast).compactMap {
+            let visibleDewPoints = visiblePoints.compactMap {
                 $0.dewPointFahrenheit
             }
             
             visibleTemperatures.append(contentsOf: visibleDewPoints)
+        }
+        
+        if isShowingHeatIndex {
+            let visibleHeatIndexes = visiblePoints.compactMap {
+                $0.heatIndexFahrenheit
+            }
+            
+            visibleTemperatures.append(contentsOf: visibleHeatIndexes)
         }
         
         guard let minimum = visibleTemperatures.min(),
@@ -1185,7 +1371,6 @@ struct ContentView: View {
         let upperBound = WeatherMath.upperChartBound(for: maximum)
         
         return lowerBound ... upperBound
-        
     }
     private var dailyTemperatureHighlights: [TemperaturePoint] { /// this is NOT stored data, it is a computed property.
         let calendar = Calendar.current
@@ -1395,23 +1580,57 @@ struct ContentView: View {
         }
     }
     
+    ///Loads forecast discussion. Built-in stations uses its configured office immediately.
+    ///User-added station Office is empty, look up office from coordinates and fetch that office's latest AFD.
     private func loadForecastDiscussion() async {
         isLoadingForecastDiscussion = true
         
-        do {
-            let discussion = try await WeatherService().fetchLatestForecastDiscussion(
-                office: selectedLocation.forecastDiscussionOffice
-            )
-            forecastDiscussion = discussion
-            isShowingForecastDiscussion = true
-            networkStatus = "Forecast discussion loaded."
-        } catch {
-            networkStatus = "Forecast discussion failed: \(error.localizedDescription)"
+        defer {
+            isLoadingForecastDiscussion = false
         }
         
-        isLoadingForecastDiscussion = false
-        
+        do {
+            let weatherService = WeatherService()
+            
+            let configuredOffice =
+                selectedLocation.forecastDiscussionOffice
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased()
+            
+            let forecastOffice: String
+            
+            if configuredOffice.isEmpty {
+                networkStatus =
+                    "Finding local NWS forecast office..."
+                
+                forecastOffice =
+                    try await weatherService
+                        .fetchForecastOffice(
+                            latitude: selectedLocation.latitude,
+                            longitude: selectedLocation.longitude
+                        )
+            } else {
+                forecastOffice = configuredOffice
+            }
+            
+            networkStatus =
+                "Loading \(forecastOffice) forecast discussion..."
+            
+            let discussion =
+                try await weatherService
+                    .fetchLatestForecastDiscussion(office: forecastOffice)
+            
+            forecastDiscussion = discussion
+            isShowingForecastDiscussion = true
+            networkStatus =
+                "\(forecastOffice) forecast discussion loaded."
+        } catch {
+            networkStatus =
+                "Forecast discussion failed: "
+                + error.localizedDescription
+        }
     }
+    
     private func refreshWeather() async {
         isLoading = true
         

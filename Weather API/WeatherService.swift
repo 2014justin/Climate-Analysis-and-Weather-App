@@ -94,6 +94,40 @@ struct WeatherService {
         )
     }
     
+    func fetchForecastOffice(
+        latitude: Double,
+        longitude: Double
+    ) async throws -> String {
+        guard let pointURL = URL(
+            string:
+                "https://api.weather.gov/points/"
+                + "\(latitude),\(longitude)"
+        ) else {
+            throw URLError(.badURL)
+        }
+        
+        let pointData = try await fetchData(
+            from: pointURL
+        )
+        
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
+        let pointResponse = try decoder.decode(
+            NWSPointResponse.self,
+            from: pointData
+        )
+        
+        guard let office =
+                pointResponse.properties.gridId?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+              office.isEmpty == false else {
+            throw URLError(.cannotParseResponse)
+        }
+        
+        return office.uppercased()
+    }
+    
     func fetchLatestForecastDiscussion(
         office: String
     ) async throws -> ForecastDiscussion {
@@ -138,6 +172,31 @@ struct WeatherService {
         
         return data
         
+    }
+    
+    ///fetch station metadata via api.weather.gov.
+    func fetchStationMetadata(
+        stationID: String
+    ) async throws -> NWSStationResponse {
+        let safeStationID = stationID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        
+        guard let url = URL(
+            string: "https://api.weather.gov/stations/\(safeStationID)"
+        ) else {
+            throw URLError(.badURL)
+        }
+        
+        let data = try await fetchData(from: url)
+        
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
+        return try decoder.decode(
+            NWSStationResponse.self,
+            from: data
+        )
     }
     
     func decodeObservations(from data: Data) throws -> NWSObservationResponse {

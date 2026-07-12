@@ -58,7 +58,48 @@ struct NWSPointResponse: Decodable {
 
 struct NWSPointProperties: Decodable {
     let forecastHourly: URL
+    let gridId: String?
 }
+
+///fetch station information from station identifier like 'KBIL' and gather all the data you need from it.
+struct NWSStationResponse: Decodable {
+    let properties: NWSStationProperties
+    let geometry: NWSStationGeometry
+}
+
+/// Takes into account elevation difference for nearby stations.
+struct NWSStationProperties: Decodable {
+    let name: String?
+    let stationIdentifier: String?
+    let timeZone: String?
+    let elevation: NWSMeasurement?
+
+    var elevationFeet: Double? {
+        guard let elevation,
+              let value = elevation.value else {
+            return nil
+        }
+        
+        ///Does a unit conversion if necessary
+        switch elevation.unitCode {
+        case "wmoUnit:m":
+            return value * 3.28084
+
+        case "wmoUnit:ft":
+            return value
+
+        default:
+            return nil
+        }
+    }
+}
+
+///returns GeoJSON coordinates: [longitude, latitude]
+struct NWSStationGeometry: Decodable {
+    let coordinates: [Double]
+}
+
+
 
 struct NWSHourlyForecastResponse: Decodable {
     let properties: NWSHourlyForecastProperties

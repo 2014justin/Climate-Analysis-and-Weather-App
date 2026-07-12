@@ -22,6 +22,36 @@ struct WeatherLocation: Identifiable, Equatable, Hashable {
     let climatologyProfile: ClimatologyProfile
     let timeZoneIdentifier: String
     let acisStationID: String
+    let generatedClimateProfile: GeneratedClimateProfile?
+    
+    ///existing curated stations can still omit generatedClimateProfile, because the initializer default is nil
+    ///Generated station factory can pass generatedClimateProfile: profile
+    ///the struct remains hashable, equatable, and first-class for the picker.
+    init(
+        id: String,
+        name: String,
+        observationStationID: String,
+        displayStationID: String,
+        latitude: Double,
+        longitude: Double,
+        forecastDiscussionOffice: String,
+        climatologyProfile: ClimatologyProfile,
+        timeZoneIdentifier: String,
+        acisStationID: String,
+        generatedClimateProfile: GeneratedClimateProfile? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.observationStationID = observationStationID
+        self.displayStationID = displayStationID
+        self.latitude = latitude
+        self.longitude = longitude
+        self.forecastDiscussionOffice = forecastDiscussionOffice
+        self.climatologyProfile = climatologyProfile
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.acisStationID = acisStationID
+        self.generatedClimateProfile = generatedClimateProfile
+    }
 }
 
 extension WeatherLocation {
@@ -150,7 +180,74 @@ extension WeatherLocation {
         .longBeach
     ]
     
+    ///Add a generated location factory
+    static func generated(from result: GeneratedStationBuildResult) -> WeatherLocation {
+        generated(
+            from: SavedGeneratedStation(result: result)
+        )
+    }
+    
+    static func generated(from savedStation: SavedGeneratedStation) -> WeatherLocation {
+        WeatherLocation(
+            id: savedStation.id,
+            name: savedStation.name,
+            observationStationID: savedStation.observationStationID,
+            displayStationID: savedStation.displayStationID,
+            latitude: savedStation.latitude,
+            longitude: savedStation.longitude,
+            forecastDiscussionOffice: "",
+            climatologyProfile: .northLasVegas,
+            timeZoneIdentifier: savedStation.timeZoneIdentifier,
+            acisStationID: savedStation.acisStationID,
+            generatedClimateProfile: savedStation.generatedClimateProfile
+        )
+    }
+    
     var timeZone: TimeZone {
         TimeZone(identifier: timeZoneIdentifier) ?? .current
+    }
+    
+    func normalHigh(dayOfYear t: Int) -> Double {
+        if let generatedClimateProfile {
+            return generatedClimateProfile.normalHigh(dayOfYear: t)
+        }
+
+        return WeatherAlmanac.normalHighFahrenheit(
+            dayOfYear: t,
+            profile: climatologyProfile
+        )
+    }
+
+    func normalLow(dayOfYear t: Int) -> Double {
+        if let generatedClimateProfile {
+            return generatedClimateProfile.normalLow(dayOfYear: t)
+        }
+
+        return WeatherAlmanac.normalLowFahrenheit(
+            dayOfYear: t,
+            profile: climatologyProfile
+        )
+    }
+
+    func solarEnergy(dayOfYear t: Int) -> Double {
+        if let generatedClimateProfile {
+            return generatedClimateProfile.solarEnergy(dayOfYear: t)
+        }
+
+        return WeatherAlmanac.solarEnergy(
+            dayOfYear: t,
+            profile: climatologyProfile
+        )
+    }
+
+    func normalizedSolarEnergy(dayOfYear t: Int) -> Double {
+        if let generatedClimateProfile {
+            return generatedClimateProfile.normalizedSolarEnergy(dayOfYear: t)
+        }
+
+        return WeatherAlmanac.normalizedSolarEnergy(
+            dayOfYear: t,
+            profile: climatologyProfile
+        )
     }
 }
