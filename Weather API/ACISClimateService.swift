@@ -95,6 +95,74 @@ struct ACISThresholdSummary {
     let averageFirstFallDay: Double?
     let averageAboveThresholdSeasonLength: Double?
     let thresholdRiskPoints: [ACISThresholdRiskPoint]
+    
+    var earliestSpringEventDay: Double? {
+        ACISThresholdCalculator.percentileDayOfYear(
+            from: seasons.compactMap { season in
+                season.lastSpringDate
+            },
+            percentile: 0.0
+        )
+    }
+    
+    var latestSpringEventDay: Double? {
+        ACISThresholdCalculator.percentileDayOfYear(
+            from: seasons.compactMap { season in
+                season.lastSpringDate
+            },
+            percentile: 100.0
+        )
+    }
+    
+    var earliestFallEventDay: Double? {
+        ACISThresholdCalculator.percentileDayOfYear(
+            from: seasons.compactMap { season in
+                season.firstFallDate
+            },
+            percentile: 0.0
+        )
+    }
+    
+    var latestFallEventDay: Double? {
+        ACISThresholdCalculator.percentileDayOfYear(
+            from: seasons.compactMap { season in
+                season.firstFallDate
+            },
+            percentile: 100.0
+        )
+    }
+    
+    /// The date when half of historical seasons have locked in.
+    /// In the existing risk graph, this is the 50% chance
+    var medianSpringLockInDay: Double? {
+        thresholdRiskPoints.first { riskPoint in
+            riskPoint.percent == 50.0
+        }?.springRiskDay
+    }
+    
+    /// 90% date. 10% of failure after this date
+    var ninetyPercentSpringLockInDay: Double? {
+        thresholdRiskPoints.first { riskPoint in
+            riskPoint.percent == 10.0
+        }?.springRiskDay
+    }
+    
+    ///Determines if the lock in date is climatologically meaningful, a true climatological signal
+    ///that is not just an artifact of colliding with the Jul 31 midsommar boundary date.
+    var hasMeaningfulSpringLockIn: Bool {
+        guard let medianSpringLockInDay,
+              let ninetyPercentSpringLockInDay else {
+            return false
+        }
+        
+        /// July 7
+        let medianCutoffDay = 188.0
+        /// July 25
+        let ninetyPercentCutoffDay = 207.0
+        
+        return medianSpringLockInDay <= medianCutoffDay
+            && ninetyPercentSpringLockInDay <= ninetyPercentCutoffDay
+    }
 }
 
 struct ACISStationMetadata: Decodable {
@@ -1176,6 +1244,8 @@ enum ACISThresholdCalculator {
                 )
             )
         }
+        
+        
         
         return ACISThresholdSummary(
             startYear: startYear,

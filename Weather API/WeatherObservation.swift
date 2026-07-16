@@ -6,7 +6,7 @@ struct WeatherObservation {
     let heatIndex: Double
     let relativeHumidity: Double
     let windSpeed: Double
-    let pressure: Double
+    let pressure: Double?
     let wetBulb: Double
     let coolingPotential: Double
     let condition: String

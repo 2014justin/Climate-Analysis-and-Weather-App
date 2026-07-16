@@ -331,6 +331,33 @@ enum HistoryDuration: Int, CaseIterable, Identifiable {
     }
 }
 
+/// Define the selectable variable for the climate widget Tmin and Tmax
+enum ThermalPaceVariable: String, CaseIterable, Identifiable {
+    case minimum
+    case maximum
+    
+    var id: String {
+        rawValue
+    }
+    var label: String {
+        switch self {
+        case .minimum:
+            return "Tmin"
+        case .maximum:
+            return "Tmax"
+        }
+    }
+    
+    var subtitle: String {
+        switch self {
+        case .minimum:
+            return "Normal minimum-temperature progression"
+        case .maximum:
+            return "Normal maximum-temperature progression"
+        }
+    }
+}
+
 /// Add UI element for the climate analyzer drop down menu and make sure
 /// the climate graph of interest is selected.
 /// added threshold seasons climate chart. three climate views in rotation.
@@ -362,6 +389,13 @@ enum ClimateGraphType: Identifiable {
     }
 }
 
+private enum WeatherRefreshState {
+    case idle
+    case refreshing
+    case updated(Date)
+    case failed
+}
+
 ///Add background stars to the app at nighttime. This depends on station.
 struct BackgroundStar: Identifiable {
     let id = UUID()
@@ -371,7 +405,184 @@ struct BackgroundStar: Identifiable {
     let opacity: Double
 }
 
+
+/// Add the chart point model for normal climate widget
+struct ThermalPacePoint: Identifiable {
+    let dayOffset: Int
+    let date: Date
+    let temperature: Double
+    let standardDeviation: Double?
+    
+    /// dayOffset does 14 days before and after.
+    var id: Int {
+        dayOffset
+    }
+}
+
+/// Phase-point model for our phase portrait climate widget
+struct SeasonalPhasePoint: Identifiable {
+    let dayOfYear: Int
+    let normalizedSolar: Double
+    let minimumTemperature: Double
+    
+    var id: Int {
+        dayOfYear
+    }
+}
+
+
+///Reusable bar component for threshold season
+struct SeasonalWindowBar: View {
+    let leftOuterDay: Double
+    let leftInnerDay: Double
+    let rightInnerDay: Double
+    let rightOuterDay: Double
+    let currentDay: Double
+    
+    private func xPosition(for day: Double, width: CGFloat) -> CGFloat {
+        let clampedDay = min(max(day, 1.0), 365.0)
+        let fraction = (clampedDay - 1.0) / 364.0
+        
+        return CGFloat(fraction) * width
+    }
+    
+    private func clampedLabelX(_ position: CGFloat, width: CGFloat) -> CGFloat {
+        min(max(position, 22), max(22, width - 22))
+    }
+    
+    private func shortDateText(for day: Double) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        
+        guard let date = calendar.date(
+            from: DateComponents(year: 2001, day: Int(day.rounded()))
+        ) else {
+            return "-"
+        }
+        
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "M/d"
+        
+        return formatter.string(from: date)
+    }
+    
+    private func boundaryLabel(percent: String, day: Double) -> some View {
+        VStack(spacing: 0) {
+            Text(percent)
+                .font(.system(size: 9, weight: .semibold))
+            
+            Text(shortDateText(for: day))
+                .font(.system(size: 9))
+        }
+        .monospacedDigit()
+        .foregroundStyle(DashboardTheme.textSecondary)
+    }
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let trackY: CGFloat = 27
+            
+            let leftOuterX = xPosition(for: leftOuterDay, width: width)
+            let leftInnerX = xPosition(for: leftInnerDay, width: width)
+            let rightInnerX = xPosition(for: rightInnerDay, width: width)
+            let rightOuterX = xPosition(for: rightOuterDay, width: width)
+            let currentX = xPosition(for: currentDay, width: width)
+            
+            ZStack {
+                Capsule()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(width: width, height: 10)
+                    .position(x: width / 2, y: trackY)
+                
+                Capsule()
+                    .fill(DashboardTheme.forecastTemperature.opacity(0.42))
+                    .frame(
+                        width: max(leftInnerX - leftOuterX, 2),
+                        height: 10
+                    )
+                    .position(
+                        x: (leftOuterX + leftInnerX) / 2,
+                        y: trackY
+                    )
+                
+                Capsule()
+                    .fill(DashboardTheme.observedTemperature)
+                    .frame(
+                        width: max(rightInnerX - leftInnerX, 2),
+                        height: 10
+                    )
+                    .position(
+                        x: (leftInnerX + rightInnerX) / 2,
+                        y: trackY
+                    )
+                
+                Capsule()
+                    .fill(DashboardTheme.forecastTemperature.opacity(0.42))
+                    .frame(
+                        width: max(rightOuterX - rightInnerX, 2),
+                        height: 10
+                    )
+                    .position(
+                        x: (rightInnerX + rightOuterX) / 2,
+                        y: trackY
+                    )
+                
+                Circle()
+                    .fill(DashboardTheme.normal)
+                    .frame(
+                        width: 11,
+                        height: 11
+                    )
+                    .overlay {
+                        Circle()
+                            .stroke(DashboardTheme.plotArea, lineWidth: 2)
+                    }
+                    .position(x: currentX, y: trackY)
+                    .help("Today: \(shortDateText(for: currentDay))")
+                
+                boundaryLabel(percent: "90%", day: leftOuterDay)
+                    .position(
+                        x: clampedLabelX(leftOuterX, width: width),
+                        y: 8
+                    )
+                
+                boundaryLabel(percent: "10%", day: leftInnerDay)
+                    .position(
+                        x: clampedLabelX(leftInnerX, width: width),
+                        y: 48
+                    )
+                
+                boundaryLabel(percent: "10%", day: rightInnerDay)
+                    .position(
+                        x: clampedLabelX(rightInnerX, width: width),
+                        y: 48
+                    )
+                
+                boundaryLabel(percent: "90%", day: rightOuterDay)
+                    .position(
+                        x: clampedLabelX(rightOuterX, width: width),
+                        y: 8
+                    )
+            }
+        }
+        .frame(height: 56)
+    }
+}
+
+/// Add a sheet-request type. Guarantees that every Atlas selection creates a fresh sheet
+/// and fresh StationAdderView state.
+private struct StationAdderRequest: Identifiable {
+    let id = UUID()
+    let initialStationID: String
+}
+
 struct ContentView: View {
+    /// App's memory of which section (atlas/dashboard) is being selected.
+    
+    @State private var selectedAppSection: AppSection = .dashboard
     @State private var observation = WeatherObservation(
         /// Start by defining the state variables. These are variables that can change in real time and be displayed
         /// to the user. Private makes it access-controlled. So @State private variable really means
@@ -382,7 +593,7 @@ struct ContentView: View {
         heatIndex: 72.0,
         relativeHumidity: 38.0,
         windSpeed: 0.0,
-        pressure: 0.0,
+        pressure: nil,
         wetBulb: 58.0,
         coolingPotential: 14.0,
         condition: "Unknown",
@@ -392,6 +603,7 @@ struct ContentView: View {
     @State private var selectedClimateGraph = ClimateGraphType.annualTemperatureCurve
     @State private var activeClimateGraph: ClimateGraphType?
     @State private var networkStatus = "Not requested yet"
+    @State private var weatherRefreshState = WeatherRefreshState.idle
     @State private var isLoading = false
     @State private var temperatureHistory: [TemperaturePoint] = [] /// Start this array empty but grow & shrink as needed.
     @State private var temperatureForecast: [TemperaturePoint] = [] /// It will change in size depending on selected duration (24, 48, or 72 hours).
@@ -399,11 +611,24 @@ struct ContentView: View {
     @State private var isShowingDewPoint = false
     @State private var isShowingHeatIndex = false
     @State private var selectedHistoryDuration = HistoryDuration.twentyFourHours
+    @State private var selectedThermalPaceVariable = ThermalPaceVariable.minimum
+    @State private var liveWeatherYearDays: [WeatherYearDay] = []
+    @State private var liveSeasonalPhaseStatus = "Current weather year not loaded yet."
+    @State private var thresholdNormalPeriodObservations: [ACISDailyObservation] = []
+    @State private var thresholdWidgetStatus = "Normal-period thresholds not loaded yet."
+    @State private var thresholdWidgetFreezeSummary: ACISThresholdSummary?
+    @State private var thresholdWidgetWarmSummaries: [ACISThresholdSummary] = []
     @State private var forecastDiscussion: ForecastDiscussion?
     @State private var isShowingForecastDiscussion = false
     @State private var isLoadingForecastDiscussion = false
     @State private var selectedLocation = WeatherLocation.northLasVegas
-    @State private var isShowingStationAdder = false
+    /// A non-nil request presents the builder and carries
+    /// its starting weather-station ID.
+    @State private var stationAdderRequest:
+        StationAdderRequest?
+    
+    ///Let ContentView remember the Atlas station
+    @State private var stationAdderInitialStationID = ""
     @State private var isShowingStationRemovalConfirmation = false
     @State private var isBuildingGeneratedClimateProfile = false
     @State private var savedGeneratedStations: [SavedGeneratedStation] = []
@@ -497,6 +722,36 @@ struct ContentView: View {
         }
         .allowsHitTesting(false)
     }
+    
+    /// Pretty-UI for station refresh
+    @ViewBuilder
+    private var stationRefreshStatus: some View {
+        switch weatherRefreshState {
+        case .idle:
+            EmptyView()
+        case .refreshing:
+            Label(
+                "Refreshing...",
+                systemImage: "arrow.triangle.2.circlepath"
+            )
+            .foregroundStyle(DashboardTheme.forecastTemperature)
+        
+        case .updated(let timestamp):
+            Label(
+                "Updated: \(timestamp.formatted(date: .omitted, time: .shortened))",
+                systemImage: "checkmark.circle.fill"
+            )
+            .foregroundStyle(DashboardTheme.success)
+            
+        case .failed:
+            Label(
+                "Update failed",
+                systemImage: "xmark.circle.fill"
+            )
+            .foregroundStyle(DashboardTheme.failure)
+        }
+    }
+    
     ///Dashboard UI
     private var dashboardView: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -504,7 +759,10 @@ struct ContentView: View {
                 .font(.largeTitle)
             /// Gives the application a text identifying itself as a 'weather dashboard'
             HStack(spacing: 8) {
-                Picker("Location", selection: $selectedLocation) {
+                Picker(
+                    "Location",
+                    selection: $selectedLocation
+                ) {
                     ForEach(availableLocations) { location in
                         Text(location.name)
                             .tag(location)
@@ -516,103 +774,109 @@ struct ContentView: View {
                         await refreshWeather()
                     }
                 }
-                
+
                 Menu {
                     Button {
-                        isShowingStationAdder = true
+                        stationAdderRequest = StationAdderRequest(
+                            initialStationID: ""
+                        )
                     } label: {
-                        Label("Add Station...", systemImage: "plus")
+                        Label(
+                            "Add Station...",
+                            systemImage: "plus"
+                        )
                     }
-                    
+
                     Divider()
-                    
+
                     Button(role: .destructive) {
                         isShowingStationRemovalConfirmation = true
                     } label: {
-                        Label("Remove Current Location...", systemImage: "trash")
+                        Label(
+                            "Remove Current Location...",
+                            systemImage: "trash"
+                        )
                     }
-                    .disabled(selectedSavedGeneratedStation == nil)
+                    .disabled(
+                        selectedSavedGeneratedStation == nil
+                    )
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color.blue)
+                        .font(
+                            .system(
+                                size: 15,
+                                weight: .bold
+                            )
                         )
+                        .foregroundStyle(.white)
+                        .accessibilityLabel("Manage Stations")
                 }
-                .menuStyle(.button)
+                .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Manage stations")
+                .frame(width: 50, height: 32)
+                .background {
+                    RoundedRectangle(
+                        cornerRadius: 8,
+                        style: .continuous
+                    )
+                    .fill(
+                        DashboardTheme.observedTemperature
+                    )
+                }
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: 8,
+                        style: .continuous
+                    )
+                    .stroke(
+                        Color.white.opacity(0.22),
+                        lineWidth: 1
+                    )
+                    .allowsHitTesting(false)
+                }
+                .contentShape(
+                    RoundedRectangle(
+                        cornerRadius: 8,
+                        style: .continuous
+                    )
+                )
+                .shadow(
+                    color:
+                        DashboardTheme.observedTemperature
+                            .opacity(0.28),
+                    radius: 4,
+                    y: 1
+                )
+                .help("Manage Stations")
+                
             }
             .controlSize(.large)
-            
-            Text("Station: \(selectedLocation.displayStationID)")
-                .font(.headline)
 
+            HStack(spacing: 10) {
+                Text("Station: \(selectedLocation.displayStationID)")
+                    .font(.headline)
+                
+                stationRefreshStatus
+                    .font(.subheadline.weight(.semibold))
+            }
+                        
             Divider()
-
+            
+            /// Dashboard's main HStack here.
             HStack(alignment: .top, spacing: 8) {
-                leftDashboardPanel
-                /// Put the live numerical data on the left and the temperature chart on the right
-                temperatureChart
-            }
-            /// Refresh weather button
-            Button(isLoading ? "Refreshing ..." : "Refresh Weather") {
-                Task {
-                    await refreshWeather()
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-            .disabled(isLoading)
-
-            Button(isLoadingForecastDiscussion ? "Loading Discussion..." : "Show Forecast Discussion") {
-                Task {
-                    await loadForecastDiscussion()
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-            .disabled(isLoadingForecastDiscussion)
-
-            /// Add the climate analyzer graph selector UI element.
-            /// Will show both the annual temperature curve & hysteresis graph
-            Menu("Climate ▾") {
-                Button("Show Annual Temperature Curve") {
-                    selectedClimateGraph = .annualTemperatureCurve
-                    activeClimateGraph = .annualTemperatureCurve
+                VStack(alignment: .leading, spacing: 12) {
+                    leftDashboardPanel
+                    dashboardActionButtons
                 }
                 
-                Button("Show Seasonal Hysteresis Curve") {
-                    selectedClimateGraph = .seasonalHysteresisCurve
-                    activeClimateGraph = .seasonalHysteresisCurve
-                }
-                
-                ///threshold seasons button
-                Button("Show Threshold Seasons") {
-                    selectedClimateGraph = .thresholdSeasons
-                    activeClimateGraph = .thresholdSeasons
-                }
-                
-                ///Weather year button
-                Button("Show Weather Year Graph") {
-                    selectedClimateGraph = .weatherForTheYear
-                    activeClimateGraph = .weatherForTheYear
+                VStack(alignment: .leading, spacing: 8) {
+                    temperatureChart
+                    climateAtAGlanceSection
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
 
             ///Network status
             Text(networkStatus)
-                .foregroundStyle(.secondary)
-
-            Divider()
-            /// Tells you when weather was last updated.
-            Text("Last Updated: \(observation.lastUpdated)")
                 .foregroundStyle(.secondary)
         }
     }
@@ -635,6 +899,69 @@ struct ContentView: View {
         }
         .foregroundStyle(DashboardTheme.textPrimary)
         .frame(width: 365)
+    }
+    
+    /// Dashboard controls that live beneath the left information cards.
+    private var dashboardActionButtons: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(
+                isLoading
+                    ? "Refreshing..."
+                    : "Refresh Weather"
+            ) {
+                Task {
+                    await refreshWeather()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+            .disabled(isLoading)
+            
+            Button(
+                isLoadingForecastDiscussion
+                    ? "Loading Discussion..."
+                    : "Show Forecast Discussion"
+            ) {
+                Task {
+                    await loadForecastDiscussion()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+            .disabled(isLoadingForecastDiscussion)
+            
+            Menu("Climate ▾") {
+                Button("Show Annual Temperature Curve") {
+                    selectedClimateGraph =
+                        .annualTemperatureCurve
+                    activeClimateGraph =
+                        .annualTemperatureCurve
+                }
+                
+                Button("Show Seasonal Hysteresis Curve") {
+                    selectedClimateGraph =
+                        .seasonalHysteresisCurve
+                    activeClimateGraph =
+                        .seasonalHysteresisCurve
+                }
+                
+                Button("Show Threshold Seasons") {
+                    selectedClimateGraph =
+                        .thresholdSeasons
+                    activeClimateGraph =
+                        .thresholdSeasons
+                }
+                
+                Button("Show Weather Year Graph") {
+                    selectedClimateGraph =
+                        .weatherForTheYear
+                    activeClimateGraph =
+                        .weatherForTheYear
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+        }
     }
     
     /// Provides one consistent surface for dashboard information groups.
@@ -660,6 +987,1159 @@ struct ContentView: View {
                 .stroke(DashboardTheme.border, lineWidth: 1)
             }
         
+    }
+    
+    /// A compact card inside Climate-at-a-Glance.
+    /// Real chart content will replace the subtitle later.
+    private func climateAtAGlanceCard(
+        title: String,
+        subtitle: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                
+                Spacer()
+                
+                Image(
+                    systemName:
+                        "arrow.up.left.and.arrow.down.right"
+                )
+                .font(.caption)
+                .foregroundStyle(DashboardTheme.textSecondary)
+            }
+            
+            Spacer()
+            
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(DashboardTheme.textSecondary)
+        }
+        .padding(12)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .background(DashboardTheme.plotArea)
+        .clipShape(
+            RoundedRectangle(cornerRadius: DashboardTheme.cardCornerRadius)
+        )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: DashboardTheme.cardCornerRadius
+            )
+            .stroke(
+                DashboardTheme.border,
+                lineWidth: 1
+            )
+        }
+    }
+    
+    /// Creates the two phase datasets; one for s(t) and one for T min
+    private var climatologicalSeasonalPhasePoints:
+    [SeasonalPhasePoint] {
+        (1...365).map { dayOfYear in
+            SeasonalPhasePoint(
+                dayOfYear: dayOfYear,
+                normalizedSolar: selectedLocation.normalizedSolarEnergy(dayOfYear: dayOfYear),
+                minimumTemperature: selectedLocation.normalLow(dayOfYear: dayOfYear)
+            )
+        }
+    }
+    
+    private var liveSeasonalPhasePoints:
+    [SeasonalPhasePoint] {
+        liveWeatherYearDays.compactMap { day in
+            guard let minimumTemperature = day.selectedYearMinimum
+            else {
+                return nil
+            }
+            
+            return SeasonalPhasePoint(
+                dayOfYear: day.dayOfYear,
+                normalizedSolar: selectedLocation.normalizedSolarEnergy(dayOfYear: day.dayOfYear),
+                minimumTemperature: minimumTemperature
+            )
+        }
+    }
+    
+    /// Creates the shared smoothed series for our hysteresis widget and graph.
+    private func referenceDayOfYear(for date: Date) -> Int? {
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = selectedLocation.timeZone
+        
+        let components = localCalendar.dateComponents([.month, .day], from: date)
+        
+        guard let month = components.month,
+              var day = components.day else {
+            return nil
+        }
+        
+        if month == 2 && day == 29 {
+            day = 28
+        }
+        
+        var referenceCalendar = Calendar(identifier: .gregorian)
+        referenceCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        
+        guard let referenceDate = referenceCalendar.date(
+            from: DateComponents(year: 2001, month: month, day: day)
+        ) else {
+            return nil
+        }
+        
+        return referenceCalendar.ordinality(
+            of: .day,
+            in: .year,
+            for: referenceDate
+        )
+    }
+    
+    /// This function forces any integer onto the repeating interval 1...365. For example 370 % 365 == 5, because day 370 is day 5.
+    /// The extra + 365 makes it so we don't have a negative remainder.
+    private func wrappedClimateDay(_ day: Int) -> Int {
+        ((day - 1) % 365 + 365) % 365 + 1
+    }
+    
+    /// Returns a array like [ 207:68.3, 208: 67.1, 209: 69.0 ] The integer is a dictionary entry.
+    private var forecastDailyMinimumsByDayOfYear: [Int: Double] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = selectedLocation.timeZone
+        
+        let today = calendar.startOfDay(for: Date())
+        
+        ///.filter examines every element and keeps only those for which the closure returns true. point is one
+        ///hourly forecast point, we find its station-local calendar day. If that day is later than today, keep it, otherwise discard.
+        let futurePoints = temperatureForecast.filter { point in
+            calendar.startOfDay(for: point.timestamp) > today
+        }
+        
+        ///Groups all hourly points sharing the same station-local date.
+        ///That lets us calculate one minimum temperature from each day's hourly points
+        let groupedPoints = Dictionary(grouping: futurePoints) { point in
+            calendar.startOfDay(for: point.timestamp)
+        }
+        
+        /// convert the date to a climatological day number, extract every hourly temperature, find the ssmallest temperature,
+        /// if either operation fails, skip that entry
+        return groupedPoints.reduce(into: [:]) { result, entry in
+            let date = entry.key
+            let points = entry.value
+            
+            guard let dayOfYear = referenceDayOfYear(for: date),
+                  let minimum = points.map(\.temperatureFahrenheit).min() else {
+                return
+            }
+            
+            result[dayOfYear] = minimum
+        }
+    }
+    
+    private var smoothedLiveSeasonalPhasePoints: [SeasonalPhasePoint] {
+        let observedPoints = liveSeasonalPhasePoints
+        
+        let observedMinimums = Dictionary(
+            uniqueKeysWithValues: observedPoints.map {
+                ($0.dayOfYear, $0.minimumTemperature)
+            }
+        )
+        
+        let forecastMinimums = forecastDailyMinimumsByDayOfYear
+        
+        ///creates a new dictionary containing entries from both dictionaries. the closure is needed in case both
+        ///dictionaries contain the same day. The underscore means swift passes the existing observed value here,
+        ///but we intentionally do not need to name or use it.
+        let combinedMinimums = observedMinimums.merging(forecastMinimums) {
+            _, forecastValue in forecastValue
+        }
+        
+        let latestObservedDay = observedPoints.map(\.dayOfYear).max()
+        
+        /// .compactMap transforms each input into a new value, discards any transformation that returns nil.
+        
+        return observedPoints.compactMap { point in
+            if point.dayOfYear == latestObservedDay {
+                let hasFiveForecastDays = (1...5).allSatisfy { offset in
+                    let day = wrappedClimateDay(point.dayOfYear + offset)
+                    return forecastMinimums[day] != nil
+                }
+                
+                guard hasFiveForecastDays else {
+                    return nil
+                }
+            }
+            
+            /// From -5 to 5 because we do a 5-day rolling average. compactMap discards days whose temperature is unavailable.
+            let temperatures = (-5...5).compactMap { offset in
+                let day = wrappedClimateDay(point.dayOfYear + offset)
+                return combinedMinimums[day]
+            }
+            
+            ///Needs at least 7 usable values, so 3 days before, 3 days after, and the center day.
+            guard temperatures.count >= 7 else {
+                return nil
+            }
+            
+            ///Adds the temperatures and divides by how many.
+            let average = temperatures.reduce(0,+) / Double(temperatures.count)
+            
+            /// return the raw Tmin with the local moving average.
+            return SeasonalPhasePoint(
+                dayOfYear: point.dayOfYear,
+                normalizedSolar: point.normalizedSolar,
+                minimumTemperature: average
+            )
+        }
+    }
+    
+    private var seasonalPhaseYDomain:
+    ClosedRange<Double> {
+        let temperatures =
+            climatologicalSeasonalPhasePoints.map(
+                \.minimumTemperature
+            )
+            + liveSeasonalPhasePoints.map(
+                \.minimumTemperature
+            )
+        
+        guard
+            let minimum = temperatures.min(),
+            let maximum = temperatures.max()
+        else {
+            return 0.0...100.0
+        }
+        
+        return (minimum - 5.0)...(maximum + 5.0)
+    }
+    
+    /// Calculate our standard deviation for thermal pace. Takes the climate normal and shows the standard deviation
+    /// of temperature for max/min for a given date.
+    private func thermalPaceStandardDeviation(month: Int, day: Int) -> Double? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        
+        let values = thresholdNormalPeriodObservations.compactMap { observation -> Double? in
+            guard calendar.component(.month, from: observation.date) == month,
+                  calendar.component(.day, from: observation.date) == day else {
+                return nil
+            }
+            
+            switch selectedThermalPaceVariable {
+            case .minimum:
+                return observation.minimumTemperature
+            case .maximum:
+                return observation.maximumTemperature
+            }
+        }
+        
+        guard values.count >= 10 else {
+            return nil
+        }
+        
+        /// Calculates the arithmetic mean.
+        let mean = values.reduce(0, +) / Double(values.count)
+        
+        ///For each value, subtract it from the mean, then square it and add them all up at the end
+        let squaredDeviations = values.reduce(0.0) { total, value in
+            total + pow(value - mean, 2)
+        }
+        
+        /// Sample standard deviation because the available normal-period observations estimate
+        /// the broadder climatic distribution. Requiring ten observations prevents a visually authoritative
+        /// band from being generated from a tiny sample.
+        return sqrt(
+            squaredDeviations / Double(values.count - 1)
+        )
+    }
+    
+    /// Generate the 29 fitted-normal points
+    private var thermalPacePoints: [ThermalPacePoint] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = selectedLocation.timeZone
+        
+        let today = calendar.startOfDay(for: Date())
+        
+        return (-14...14).compactMap { dayOffset in
+            guard let date = calendar.date(
+                byAdding: .day,
+                value: dayOffset,
+                to: today
+            ) else {
+                return nil
+            }
+            
+            let month = calendar.component(.month, from: date)
+            var day = calendar.component(.day, from: date)
+            
+            /// The climate fits use a 365-day year.
+            if month == 2 && day == 29 {
+                day = 28
+            }
+            
+            var referenceComponents = DateComponents()
+            referenceComponents.calendar = calendar
+            referenceComponents.timeZone = selectedLocation.timeZone
+            referenceComponents.year = 2001
+            referenceComponents.month = month
+            referenceComponents.day = day
+            
+            guard
+                let referenceDate = calendar.date(
+                    from: referenceComponents
+                ),
+                let climateDay = calendar.ordinality(
+                    of: .day,
+                    in: .year,
+                    for: referenceDate
+                )
+            else {
+                return nil
+            }
+            
+            let temperature: Double
+            let standardDeviation = thermalPaceStandardDeviation(
+                month: month,
+                day: day
+            )
+            
+            switch selectedThermalPaceVariable {
+            case .minimum:
+                temperature = selectedLocation.normalLow(
+                    dayOfYear: climateDay
+                )
+                
+            case .maximum:
+                temperature = selectedLocation.normalHigh(
+                    dayOfYear: climateDay
+                )
+            }
+            
+            return ThermalPacePoint(
+                dayOffset: dayOffset,
+                date: date,
+                temperature: temperature,
+                standardDeviation: standardDeviation
+            )
+        }
+    }
+    
+    /// y Range domain helper. The idea is we want the y-axis to be 10 deg F above and below the bounds of what is shown on the screen.
+    /// So let's say you are centered at a date, and 14 days before T min is 72. 14 days later T min is 62. Well then we would want the yRange to be
+    /// from 82 to 52. This gives us a not-too-big yRange. We will also add standard deviation later so the plus minus 10 rule gives us cushioning
+    
+    private func thermalPaceYDomain(
+        for points: [ThermalPacePoint]
+    ) -> ClosedRange<Double> {
+        let bandValues = points.flatMap { point -> [Double] in
+            guard let standardDeviation = point.standardDeviation else {
+                return [point.temperature]
+            }
+
+            return [
+                point.temperature - standardDeviation,
+                point.temperature + standardDeviation
+            ]
+        }
+
+        guard let minimumValue = bandValues.min(),
+              let maximumValue = bandValues.max() else {
+            return 0.0...100.0
+        }
+
+        let includesSpread = points.contains {
+            $0.standardDeviation != nil
+        }
+
+        let padding = includesSpread ? 2.0 : 8.0
+
+        return (minimumValue - padding)...(maximumValue + padding)
+    }
+    
+    private func thermalPaceAxisAnchor(index: Int, count: Int) -> UnitPoint {
+        if index == 0 {
+            return .topLeading
+        }
+        
+        if index == count - 1 {
+            return .topTrailing
+        }
+        
+        return .top
+    }
+    
+    ///Adds the specialized card. Puts all the points in the climatological phase portrait.
+    private var liveSeasonalPhaseCard: some View {
+        let climatePoints =
+            climatologicalSeasonalPhasePoints
+        
+        let observedPoints =
+            liveSeasonalPhasePoints
+        
+        let smoothedPoints =
+            smoothedLiveSeasonalPhasePoints
+        
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Live Seasonal Phase")
+                    .font(.headline)
+                
+                Spacer()
+                
+                Button {
+                    selectedClimateGraph = .seasonalHysteresisCurve
+                    activeClimateGraph = .seasonalHysteresisCurve
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .help("Open full seasonal hysteresis chart.")
+            }
+            
+            Chart {
+                
+                ///Climatology purple curve
+                ForEach(climatePoints) { point in
+                    LineMark(
+                        x: .value(
+                            "Normalized Solar",
+                            point.normalizedSolar
+                        ),
+                        y: .value(
+                            "Normal Tmin",
+                            point.minimumTemperature
+                        ),
+                        series: .value(
+                            "Series",
+                            "Climatology"
+                        )
+                    )
+                    .foregroundStyle(
+                        Color(
+                            red: 0.78,
+                            green: 0.25,
+                            blue: 0.95
+                        )
+                    )
+                    .lineStyle(
+                        StrokeStyle(
+                            lineWidth: 2.0,
+                            lineCap: .round,
+                            lineJoin: .round
+                        )
+                    )
+                }
+                
+                ///5-day rolling average smoothed
+                ForEach(smoothedPoints) { point in
+                    LineMark(
+                        x: .value("Normalized Solar", point.normalizedSolar),
+                        y: .value("Smoothed Tmin", point.minimumTemperature),
+                        series: .value("Series", "Current Weather Year")
+                    )
+                    .foregroundStyle(DashboardTheme.observedTemperature)
+                    .lineStyle(StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
+                }
+                
+                ///Observed 'chaotic' T min plotted
+                ForEach(observedPoints) { point in
+                    PointMark(
+                        x: .value(
+                            "Normalized Solar",
+                            point.normalizedSolar
+                        ),
+                        y: .value(
+                            "Observed Tmin",
+                            point.minimumTemperature
+                        )
+                    )
+                    .foregroundStyle(
+                        Color.white.opacity(0.42)
+                    )
+                    .symbolSize(9)
+                }
+                
+                if let latestPoint = smoothedPoints.last {
+                    PointMark(
+                        x: .value(
+                            "Latest Solar",
+                            latestPoint.normalizedSolar
+                        ),
+                        y: .value(
+                            "Latest Tmin",
+                            latestPoint.minimumTemperature
+                        )
+                    )
+                    .foregroundStyle(
+                        DashboardTheme.observedTemperature
+                    )
+                    .symbolSize(38)
+                }
+            }
+            .chartLegend(.hidden)
+            .chartXScale(domain: 0.0...1.0)
+            .chartYScale(domain: seasonalPhaseYDomain)
+            .chartXAxis {
+                AxisMarks(values: [0.0, 0.5, 1.0]) { _ in
+                    AxisGridLine()
+                        .foregroundStyle(
+                            Color.white.opacity(0.08)
+                        )
+                    
+                    AxisValueLabel()
+                        .font(.caption)
+                        .foregroundStyle(
+                            DashboardTheme.textSecondary
+                        )
+                }
+            }
+            .chartYAxis {
+                AxisMarks(
+                    position: .leading,
+                    values: .automatic(desiredCount: 3)
+                ) { _ in
+                    AxisGridLine()
+                        .foregroundStyle(
+                            Color.white.opacity(0.08)
+                        )
+                    
+                    AxisValueLabel()
+                        .font(.caption)
+                        .foregroundStyle(
+                            DashboardTheme.textSecondary
+                        )
+                }
+            }
+            .frame(
+                minHeight: 90,
+                maxHeight: .infinity
+            )
+            
+            Text(liveSeasonalPhaseStatus)
+                .font(.caption)
+                .foregroundStyle(
+                    DashboardTheme.textSecondary
+                )
+        }
+        .padding(12)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .background(DashboardTheme.plotArea)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius:
+                    DashboardTheme.cardCornerRadius
+            )
+        )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius:
+                    DashboardTheme.cardCornerRadius
+            )
+            .stroke(
+                DashboardTheme.border,
+                lineWidth: 1
+            )
+        }
+    }
+    
+    /// Create the seasonal normal climate widget. Gives us station-local calendar handling. Automatic zoomed y-axis.
+    /// A gold fitted-normal curve. A blue point and dashed rule identifying today, working Tmax and Tmin switching
+    private var thermalPaceCard: some View {
+        let points = thermalPacePoints
+        
+        let yDomain = thermalPaceYDomain(for: points)
+        
+        let axisDates = points
+            .filter { point in
+                [-14, 0, 14].contains(point.dayOffset)
+            }
+            .map(\.date)
+        
+        let todayPoint = points.first {
+            $0.dayOffset == 0
+        }
+        
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Thermal Pace")
+                    .font(.headline)
+                
+                Spacer()
+                
+                Picker(
+                    "Thermal variable",
+                    selection: $selectedThermalPaceVariable
+                ) {
+                    ForEach(ThermalPaceVariable.allCases) { variable in
+                        Text(variable.label)
+                            .tag(variable)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 100)
+                
+                Button {
+                    selectedClimateGraph = .annualTemperatureCurve
+                    activeClimateGraph = .annualTemperatureCurve
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .help("Open annual temperature curve.")
+                .font(.caption)
+                .foregroundStyle(DashboardTheme.textSecondary)
+            }
+            
+            Chart {
+                ///Adds standard-deviation band to the thermal pace chart.
+                ForEach(points) { point in
+                    if let standardDeviation = point.standardDeviation {
+                        AreaMark(
+                            x: .value("Date", point.date),
+                            yStart: .value(
+                                "Lower sigma",
+                                point.temperature - standardDeviation
+                            ),
+                            yEnd: .value(
+                                "Upper sigma",
+                                point.temperature + standardDeviation
+                            )
+                        )
+                        .foregroundStyle(Color.white.opacity(0.11))
+                        .interpolationMethod(.catmullRom)
+                    }
+                }
+                
+                ForEach(points) { point in
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value(
+                            "Normal temperature",
+                            point.temperature
+                        )
+                    )
+                    .foregroundStyle(DashboardTheme.normal)
+                    .lineStyle(
+                        StrokeStyle(
+                            lineWidth: 2.2,
+                            lineCap: .round,
+                            lineJoin: .round
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                if let todayPoint {
+                    RuleMark(
+                        x: .value("Today", todayPoint.date)
+                    )
+                    .foregroundStyle(
+                        Color.white.opacity(0.25)
+                    )
+                    .lineStyle(
+                        StrokeStyle(
+                            lineWidth: 1,
+                            dash: [3, 3]
+                        )
+                    )
+                    
+                    PointMark(
+                        x: .value("Today", todayPoint.date),
+                        y: .value(
+                            "Current normal",
+                            todayPoint.temperature
+                        )
+                    )
+                    .foregroundStyle(
+                        DashboardTheme.observedTemperature
+                    )
+                    .symbolSize(32)
+                }
+            }
+            .chartLegend(.hidden)
+            .chartYScale(domain: yDomain)
+            .chartXScale(
+                range: .plotDimension(
+                    startPadding: 18,
+                    endPadding: 18
+                )
+            )
+            .chartPlotStyle { plotArea in
+                plotArea
+                    .background(DashboardTheme.plotArea)
+            }
+            .chartXAxis {
+                AxisMarks(values: axisDates) { axisValue in
+                    AxisTick()
+                        .foregroundStyle(DashboardTheme.textSecondary)
+
+                    AxisValueLabel(
+                        format: .dateTime.month(.abbreviated).day(),
+                        anchor: thermalPaceAxisAnchor(
+                            index: axisValue.index,
+                            count: axisValue.count
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(
+                    position: .leading,
+                    values: .automatic(desiredCount: 3)
+                ) { _ in
+                    AxisGridLine()
+                        .foregroundStyle(
+                            Color.white.opacity(0.08)
+                        )
+                    
+                    AxisValueLabel()
+                        .font(.caption)
+                        .foregroundStyle(
+                            DashboardTheme.textSecondary
+                        )
+                }
+            }
+            .environment(
+                \.timeZone,
+                selectedLocation.timeZone
+            )
+            .frame(
+                minHeight: 76,
+                maxHeight: .infinity
+            )
+            
+            Text(
+                "\(selectedThermalPaceVariable.label) normal ± 1σ • ±14 days"
+            )
+            .font(.caption)
+            .foregroundStyle(DashboardTheme.textSecondary)
+        }
+        .padding(12)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .background(DashboardTheme.plotArea)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: DashboardTheme.cardCornerRadius
+            )
+        )
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: DashboardTheme.cardCornerRadius
+            )
+            .stroke(
+                DashboardTheme.border,
+                lineWidth: 1
+            )
+        }
+    }
+    
+    ///Places a reference date for our threshold seasons climate widget.
+    private var selectedLocationReferenceDayOfYear: Double {
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = selectedLocation.timeZone
+        
+        let localComponents = localCalendar.dateComponents(
+            [.month, .day],
+            from: Date()
+        )
+        
+        var referenceCalendar = Calendar(identifier: .gregorian)
+        referenceCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        
+        guard let month = localComponents.month,
+              let day = localComponents.day,
+              let referenceDate = referenceCalendar.date(
+                from: DateComponents(year: 2001, month: month, day : day)
+              ),
+              let dayOfYear = referenceCalendar.ordinality(
+                of: .day,
+                in: .year,
+                for: referenceDate
+              ) else {
+            return 1.0
+        }
+        
+        return Double(dayOfYear)
+    }
+    
+    /// Creates an adaptive selector and display its chosen threshold as a compact row.
+    /// It requires a climatologically meaningful spring lock-in, at least 15 complete seasons.
+    /// Most importantly today lying between the 90% spring and fall outer boudnaries -- at least 10%
+    /// historical season membership. Of all the qualifying  thresholds, select the highest.
+    private var adaptiveWarmLockInSummary: ACISThresholdSummary? {
+        let currentDay = selectedLocationReferenceDayOfYear
+        
+        return thresholdWidgetWarmSummaries
+            .filter { summary in
+                let ninetyPercentPoint = summary.thresholdRiskPoints.first {
+                    $0.percent == 90.0
+                }
+                
+                guard summary.hasMeaningfulSpringLockIn,
+                      summary.completeSeasonCount >= 15,
+                      let springOuterDay = ninetyPercentPoint?.springRiskDay,
+                      let fallOuterDay = ninetyPercentPoint?.fallRiskDay else {
+                    return false
+                }
+                
+                return currentDay >= springOuterDay &&
+                    currentDay <= fallOuterDay
+            }
+            .max { firstSummary, secondSummary in
+                firstSummary.threshold < secondSummary.threshold
+            }
+    }
+    
+    private var thresholdSeasonsCard: some View {
+        let tenPercentRiskPoint = thresholdWidgetFreezeSummary?
+            .thresholdRiskPoints
+            .first { $0.percent == 10.0 }
+        
+        let ninetyPercentRiskPoint = thresholdWidgetFreezeSummary?
+            .thresholdRiskPoints
+            .first { $0.percent == 90.0 }
+        
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Threshold Seasons")
+                    .font(.headline)
+                
+                Spacer()
+                
+                Button {
+                    selectedClimateGraph = .thresholdSeasons
+                    activeClimateGraph = .thresholdSeasons
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .help("Open threshold seasons.")
+            }
+            
+            if let freezeSummary = thresholdWidgetFreezeSummary {
+                HStack(spacing: 10) {
+                    Image(systemName: "snowflake")
+                        .font(.title3)
+                        .foregroundStyle(.cyan)
+                        .frame(width: 26)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("32°F Freeze-Free")
+                            .font(.subheadline.weight(.semibold))
+                        
+                        Text("10-90% climatological bounds")
+                            .font(.caption2)
+                            .foregroundStyle(DashboardTheme.textSecondary)
+                    }
+                    
+                    Spacer()
+                }
+                
+                if let leftOuterDay = ninetyPercentRiskPoint?.springRiskDay,
+                   let leftInnerDay = tenPercentRiskPoint?.springRiskDay,
+                   let rightInnerDay = tenPercentRiskPoint?.fallRiskDay,
+                   let rightOuterDay = ninetyPercentRiskPoint?.fallRiskDay {
+                    
+                    SeasonalWindowBar(
+                        leftOuterDay: leftOuterDay,
+                        leftInnerDay: leftInnerDay,
+                        rightInnerDay: rightInnerDay,
+                        rightOuterDay: rightOuterDay,
+                        currentDay: selectedLocationReferenceDayOfYear
+                    )
+                } else {
+                    Text("No defined freeze-free season.")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                
+                if let warmSummary = adaptiveWarmLockInSummary {
+                    let tenPercentPoint = warmSummary.thresholdRiskPoints.first {
+                        $0.percent == 10.0
+                    }
+                    
+                    let ninetyPercentPoint = warmSummary.thresholdRiskPoints.first {
+                        $0.percent == 90.0
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sun.max.fill")
+                                .foregroundStyle(DashboardTheme.normal)
+                            
+                            Text(
+                                "\(warmSummary.threshold, specifier: "%.0f")°F+ Afternoon Lock-In"
+                            )
+                            .font(.caption.weight(.semibold))
+                            
+                            Spacer()
+                        }
+                        
+                        if let leftOuterDay = ninetyPercentPoint?.springRiskDay,
+                           let leftInnerDay = tenPercentPoint?.springRiskDay,
+                           let rightInnerDay = tenPercentPoint?.fallRiskDay,
+                           let rightOuterDay = ninetyPercentPoint?.fallRiskDay {
+                            
+                            SeasonalWindowBar(
+                                leftOuterDay: leftOuterDay,
+                                leftInnerDay: leftInnerDay,
+                                rightInnerDay: rightInnerDay,
+                                rightOuterDay: rightOuterDay,
+                                currentDay: selectedLocationReferenceDayOfYear
+                            )
+                        }
+                    }
+                }
+                
+                Spacer()
+                
+                Text("\(freezeSummary.completeSeasonCount) complete seasons")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            } else {
+                Spacer()
+                
+                Text(thresholdWidgetStatus)
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
+        }
+        .padding(12)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .background(DashboardTheme.plotArea)
+        .clipShape(
+            RoundedRectangle(cornerRadius: DashboardTheme.cardCornerRadius)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: DashboardTheme.cardCornerRadius)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+        }
+    }
+    
+    private var climateAtAGlanceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Climate at a Glance")
+                .font(.headline)
+                .foregroundStyle(DashboardTheme.textPrimary)
+            
+            HStack(spacing: 8) {
+                liveSeasonalPhaseCard
+                
+                thermalPaceCard
+                
+                thresholdSeasonsCard
+            }
+            .frame(height: 260)
+        }
+        .padding(12)
+        .frame(width: 892, alignment: .leading)
+        .background(DashboardTheme.panel)
+        .clipShape(
+            RoundedRectangle(cornerRadius: DashboardTheme.cardCornerRadius)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: DashboardTheme.cardCornerRadius)
+            .stroke(
+                DashboardTheme.border,
+                lineWidth: 1
+            )
+        }
+    }
+    
+    ///Current year loader.
+    private func loadLiveWeatherYear() async {
+        let requestedLocation = selectedLocation
+        
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = requestedLocation.timeZone
+        
+        let now = Date()
+        let currentYear = calendar.component(.year, from: now)
+        let currentMonth = calendar.component(.month, from: now)
+        let currentDay = calendar.component(.day, from: now)
+        
+        let startDate = "\(currentYear)-01-01"
+        
+        let endDate = String(
+            format: "%04d-%02d-%02d",
+            currentYear,
+            currentMonth,
+            currentDay
+        )
+        
+        liveWeatherYearDays = []
+        liveSeasonalPhaseStatus = "Loading \(currentYear) daily minima"
+        
+        do {
+            let observations =
+                try await ACISClimateService
+                    .fetchDailyObservations(
+                        stationID: requestedLocation.acisStationID,
+                        startDate: startDate,
+                        endDate: endDate
+                    )
+            
+            /// Ignore a result if the user selected another location whilst this request was running.
+            guard
+                Task.isCancelled == false,
+                selectedLocation.id == requestedLocation.id
+            else {
+                return
+            }
+            
+            let weatherYearDays =
+                WeatherYearCalculator.weatherYearDays(
+                    from: observations,
+                    selectedYear: currentYear,
+                    location: requestedLocation
+                )
+            
+            liveWeatherYearDays = weatherYearDays
+            
+            let minimumCount = weatherYearDays
+                .compactMap { day in
+                    day.selectedYearMinimum
+                }
+                .count
+            
+            if minimumCount == 0 {
+                liveSeasonalPhaseStatus = "No current-year daily minima available."
+            } else {
+                liveSeasonalPhaseStatus = "\(minimumCount) current-year daily minima loaded."
+            }
+        } catch {
+            guard
+                Task.isCancelled == false,
+                selectedLocation.id == requestedLocation.id
+            else {
+                return
+            }
+            
+            liveWeatherYearDays = []
+            liveSeasonalPhaseStatus = "Current-year climate data unavailable."
+        }
+    }
+    
+    ///Threshold loader. Only requests Tmax and Tmin because that's all we need.
+    private func loadThresholdWidgetClimateData() async {
+        let requestedLocation = selectedLocation
+        
+        thresholdNormalPeriodObservations = []
+        thresholdWidgetWarmSummaries = []
+        thresholdWidgetFreezeSummary = nil
+        thresholdWidgetStatus = "Loading 1991-2020 threshold data..."
+        
+        do {
+            let observations =
+                try await ACISClimateService
+                    .fetchNormalPeriodTemperatureObservations(stationID: requestedLocation.acisStationID)
+            
+            guard
+                Task.isCancelled == false,
+                    selectedLocation.id == requestedLocation.id
+            else {
+                return
+            }
+            
+            thresholdNormalPeriodObservations = observations
+            
+            let pairedTemperatureCount = observations.filter { observation in
+                observation.minimumTemperature != nil && observation.maximumTemperature != nil
+            }
+                .count
+            
+            if pairedTemperatureCount == 0 {
+                thresholdWidgetStatus = "No normal-period temperature data"
+            } else {
+                let freezeSummary =
+                    ACISThresholdCalculator.thresholdSummary(
+                        from: observations,
+                        startYear: GeneratedClimateProfileBuilder.normalStartYear,
+                        endYear: GeneratedClimateProfileBuilder.normalEndYear,
+                        threshold: 32.0,
+                        field: .minimum,
+                        comparison: .lessThanOrEqual,
+                        springEventChoice: .last,
+                        fallEventChoice: .first
+                    )
+
+                thresholdWidgetFreezeSummary = freezeSummary
+                
+                let warmMode = ThresholdEventMode.warmAfternoonLockIn
+                
+                thresholdWidgetWarmSummaries = warmMode.thresholdPresets.map { threshold in
+                    ACISThresholdCalculator.thresholdSummary(
+                        from: observations,
+                        startYear: GeneratedClimateProfileBuilder.normalStartYear,
+                        endYear: GeneratedClimateProfileBuilder.normalEndYear,
+                        threshold: threshold,
+                        field: warmMode.field,
+                        comparison: warmMode.comparison,
+                        springEventChoice: warmMode.springEventChoice,
+                        fallEventChoice: warmMode.fallEventChoice
+                    )
+                }
+
+                let medianRiskPoint =
+                    freezeSummary.thresholdRiskPoints.first { riskPoint in
+                        riskPoint.percent == 50.0
+                    }
+
+                let springText =
+                    ACISThresholdCalculator.monthDayText(
+                        fromAverageDayOfYear: medianRiskPoint?.springRiskDay
+                    )
+
+                let fallText =
+                    ACISThresholdCalculator.monthDayText(
+                        fromAverageDayOfYear: medianRiskPoint?.fallRiskDay
+                    )
+
+                if springText == "none" && fallText == "none" {
+                    thresholdWidgetStatus = "No defined 32°F freeze season"
+                } else {
+                    thresholdWidgetStatus =
+                        "32°F freeze-free: \(springText) → \(fallText)"
+                }
+            }
+        } catch {
+            guard
+                Task.isCancelled == false,
+                selectedLocation.id == requestedLocation.id
+            else {
+                return
+            }
+            
+            thresholdNormalPeriodObservations = []
+            thresholdWidgetWarmSummaries = []
+            thresholdWidgetFreezeSummary = nil
+            thresholdWidgetStatus = "Threshold climate data unavailable"
+        }
     }
     
     /// Load Generated Stations
@@ -732,13 +2212,39 @@ struct ContentView: View {
         }
     }
     
+    /// Current conditions grid only displays measurements after a successful station refresh.
+    private func currentConditionText(
+        _ value: Double?,
+        decimalPlaces: Int = 1
+    ) -> String {
+        ///Continue only if weatherRefreshState matches the .updated case. Otherwise, return an em dash.
+        guard case .updated = weatherRefreshState,
+              let value else {
+            return "—"
+        }
+        
+        return value.formatted(
+            .number.precision(
+                .fractionLength(decimalPlaces)
+            )
+        )
+    }
+    
+    private var currentConditionDescription: String {
+        guard case .updated = weatherRefreshState else {
+            return "Unavailable"
+        }
+        
+        return observation.condition
+    }
+    
     private var currentConditionsGrid: some View { /// this is the same currentConditionsGrid that was called in line 187.
         Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: 8) {
             /// Makes sure the grid is nice and neat. Solves the problem of some weather parameters like Temperature
             ///  having much longer names than something like Wind. All nice and lined up.
             GridRow {
                 Text("Air Temperature")
-                Text("\(observation.airTemperature, specifier: "%.1f")") /// Makes it so air temperature is a floating point number with just one digit after the decimal.
+                Text(currentConditionText(observation.airTemperature)) /// Makes it so air temperature is a floating point number with just one digit after the decimal.
                     .monospacedDigit()
                 Text("°F")
             }
@@ -749,56 +2255,62 @@ struct ContentView: View {
             ///  ->observation.airTemperature -> Text("")
             GridRow {
                 Text("Dew Point")
-                Text("\(observation.dewPoint, specifier: "%.1f")")
+                Text(currentConditionText(observation.dewPoint))
                     .monospacedDigit()
                 Text("°F")
             }
 
             GridRow {
                 Text("Heat index")
-                Text("\(observation.heatIndex, specifier: "%.1f")")
+                Text(currentConditionText(observation.heatIndex))
                     .monospacedDigit()
                 Text("°F")
             }
 
             GridRow {
                 Text("Relative Humidity")
-                Text("\(observation.relativeHumidity, specifier: "%.1f")")
+                Text(currentConditionText(observation.relativeHumidity))
                     .monospacedDigit()
                 Text("%")
             }
 
             GridRow {
                 Text("Wind Speed")
-                Text("\(observation.windSpeed, specifier: "%.1f")")
+                Text(currentConditionText(observation.windSpeed))
                     .monospacedDigit()
                 Text("mph")
             }
 
             GridRow {
                 Text("Pressure")
-                Text("\(observation.pressure, specifier: "%.2f")")
-                    .monospacedDigit()
+                Text(
+                    currentConditionText(
+                        observation.pressure,
+                        decimalPlaces: 2
+                    )
+                )
+                .monospacedDigit()
+                
                 Text("inHg")
             }
 
             GridRow {
                 Text("Wet Bulb")
-                Text("\(observation.wetBulb, specifier: "%.1f")")
+                Text(currentConditionText(observation.wetBulb))
                     .monospacedDigit()
                 Text("°F")
             }
 
             GridRow {
                 Text("Evaporative Cooling Potential")
-                Text("\(observation.coolingPotential, specifier: "%.1f")")
+                Text(currentConditionText(observation.coolingPotential))
                     .monospacedDigit()
                 Text("°F")
             }
             
             GridRow {
                 Text("Conditions")
-                Text(observation.condition)
+                Text(currentConditionDescription)
                 Text("")
             }
         }
@@ -867,6 +2379,20 @@ struct ContentView: View {
     
     private var temperatureChart: some View {
         Chart {
+            /// Horizontal 5°F guides.
+            ForEach(Array(stride(from: chartTemperatureDomain.lowerBound, through: chartTemperatureDomain.upperBound, by: 5.0)), id: \.self) { temperature in
+                RuleMark(y: .value("Temperature grid", temperature))
+                    .foregroundStyle(DashboardTheme.chartGridMajor)
+                    .lineStyle(StrokeStyle(lineWidth: 0.65))
+            }
+
+            /// Time guides matching the current dashboard duration.
+            ForEach(Array(stride(from: chartTimeDomain.lowerBound, through: chartTimeDomain.upperBound, by: Double(chartXAxisHourStride) * 60 * 60)), id: \.self) { date in
+                RuleMark(x: .value("Time grid", date))
+                    .foregroundStyle(DashboardTheme.chartGridMinor)
+                    .lineStyle(StrokeStyle(lineWidth: 0.6, dash: [3, 5]))
+            }
+            
             /// Live, future, and past air Temperature
             ForEach(temperatureHistory) { point in /// point is the temporary name for the current item in the loop
                 LineMark(
@@ -1040,20 +2566,22 @@ struct ContentView: View {
         .chartXScale(domain: chartTimeDomain)
         .chartYAxis {
             AxisMarks(values: .stride(by: 5)) {
-                AxisGridLine()
-                    .foregroundStyle(DashboardTheme.border)
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.65))
+                    .foregroundStyle(DashboardTheme.chartGridMajor)
                 AxisTick()
                     .foregroundStyle(DashboardTheme.textSecondary)
                 AxisValueLabel()
                     .foregroundStyle(DashboardTheme.textSecondary)
             }
         }
+        
         /// This makes it so if 72 hours is selected, the x axis doesn't have labeled tick marks every 3 pixels so it looks fucked up. spaced more out
         /// on longer durations.
+        /// Main temperature chart.
         .chartXAxis {
             AxisMarks(values: .stride(by: .hour, count: chartXAxisHourStride)) { value in
-                AxisGridLine()
-                    .foregroundStyle(DashboardTheme.border)
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.6, dash: [3, 5]))
+                    .foregroundStyle(DashboardTheme.chartGridMinor)
                 AxisTick()
                     .foregroundStyle(DashboardTheme.textSecondary)
                 AxisValueLabel {
@@ -1204,21 +2732,85 @@ struct ContentView: View {
             if daylightPhase == .night {
                 starOverlay
             }
-            ///Adjust APp default window size here
-            dashboardView
-                .padding()
-                .frame(
-                    minWidth: 1210,
-                    maxWidth: .infinity,
-                    minHeight: 550,
-                    maxHeight: .infinity,
-                    alignment: .topLeading
+            ///Switch between the two screens, either the dashboard or the climate atlas.
+            ///Switch guarantees that exactly one screen is being displayed. Because all the dashboard data remains owned
+            ///by ContentView, switching to Atlas should not erase the selected station or downloaded weather data.
+            
+            /// Both screens remain alive for the lifetime of the app in runtime.
+            /// The inactive screen is invisible and cannot receive input.
+            
+            ZStack {
+                dashboardView
+                    .padding()
+                    .frame(
+                        minWidth: 1210,
+                        maxWidth: .infinity,
+                        minHeight: 550,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+                    .opacity(
+                        selectedAppSection == .dashboard
+                            ? 1
+                            : 0
+                    )
+                    .allowsHitTesting(
+                        selectedAppSection == .dashboard
+                    )
+                    .accessibilityHidden(
+                        selectedAppSection != .dashboard
+                    )
+                
+                ClimateAtlasView(
+                    selectedAppSection:
+                        $selectedAppSection,
+                    onBuildClimateProfile: {
+                        observation in
+                        
+                        stationAdderRequest =
+                            StationAdderRequest(
+                                initialStationID:
+                                    observation
+                                        .station
+                                        .source
+                                        .stationID
+                            )
+                    }
                 )
+                .opacity(
+                    selectedAppSection == .atlas
+                        ? 1
+                        : 0
+                )
+                .allowsHitTesting(
+                    selectedAppSection == .atlas
+                )
+                .accessibilityHidden(
+                    selectedAppSection != .atlas
+                )
+            }
         }
+            .overlay(alignment: .top) {
+                AppSectionPicker(
+                    selection: $selectedAppSection
+                )
+                .padding(.top, 20)
+            }
             /// Load the user-created stations.
             .task {
                 loadGeneratedStations()
             }
+        
+            /// Load weather year data automatically for each selected station
+            .task(id: selectedLocation.id) {
+                await loadLiveWeatherYear()
+            }
+        
+            /// Trigger threshold widget on station selection.
+            .task(id: selectedLocation.id) {
+                await loadThresholdWidgetClimateData()
+            }
+        
             /// Focused Scene value for File. Refresh Weather
             .focusedSceneValue(\.refreshWeather) {
                 Task {
@@ -1282,7 +2874,10 @@ struct ContentView: View {
             .sheet(item: $activeClimateGraph) { _ in
                 ClimateGraphView(
                     graphType: $selectedClimateGraph,
-                    location: selectedLocation
+                    location: selectedLocation,
+                    liveSeasonalPhasePoints: liveSeasonalPhasePoints,
+                    smoothedLiveSeasonalPhasePoints: smoothedLiveSeasonalPhasePoints,
+                    normalPeriodObservations: thresholdNormalPeriodObservations
                 )
             }
             .alert(
@@ -1301,9 +2896,15 @@ struct ContentView: View {
                     "Remove \(selectedSavedGeneratedStation?.name ?? "this location") from your saved stations?"
                 )
             }
-            .sheet(isPresented: $isShowingStationAdder) {
-                StationAdderView { result in
+            .sheet(
+                item: $stationAdderRequest
+            ) { request in
+                StationAdderView(
+                    initialStationID:
+                        request.initialStationID
+                ) { result in
                     saveGeneratedStation(result)
+                    selectedAppSection = .dashboard
                 }
             }
     }
@@ -1633,6 +3234,7 @@ struct ContentView: View {
     
     private func refreshWeather() async {
         isLoading = true
+        weatherRefreshState = .refreshing
         
         defer {
             isLoading = false
@@ -1646,7 +3248,7 @@ struct ContentView: View {
                 stationID: selectedLocation.observationStationID,
                 hours: selectedHistoryDuration.rawValue
             )
-            let forecast = try await service.fetchHourlyForecast(
+            let forecast = try? await service.fetchHourlyForecast(
                 latitude: selectedLocation.latitude,
                 longitude: selectedLocation.longitude
             )
@@ -1699,7 +3301,7 @@ struct ContentView: View {
                 Double(selectedHistoryDuration.rawValue) * 60 * 60
             )
             
-            temperatureForecast = forecast.properties.periods.compactMap { period in
+            temperatureForecast = forecast?.properties.periods.compactMap { period in
                 guard period.startTime <= forecastEndDate else {
                     return nil
                 }
@@ -1729,7 +3331,7 @@ struct ContentView: View {
                     dewPointFahrenheit: forecastDewPointFahrenheit,
                     heatIndexFahrenheit: forecastHeatIndexFahrenheit
                 )
-            }
+            } ?? []
             
             if let latestObservation = response.features.first(
                 where: { observation in
@@ -1743,11 +3345,13 @@ struct ContentView: View {
                let dewpoint = latestObservation.properties.dewpoint.value,
                let humidity = latestObservation.properties.relativeHumidity.value,
                let windSpeedKph = latestObservation.properties.windSpeed.value {
-               let pressurePascals = latestObservation.properties.barometricPressure.value ?? 0
+                let pressureInHg = latestObservation.properties.barometricPressure.value.map { pressurePascals in
+                    WeatherMath.pascalsToInchesOfMercury(pressurePascals)
+                }
+
                 let fahrenheit = WeatherMath.celsiusToFahrenheit(temperature)
                 let dewpointFahrenheit = WeatherMath.celsiusToFahrenheit(dewpoint)
                 let windSpeedMph = WeatherMath.kilometersPerHourToMilesPerHour(windSpeedKph)
-                let pressureInHg = WeatherMath.pascalsToInchesOfMercury(pressurePascals)
                 
                 let wetBulbCelsius = WeatherMath.wetBulbCelsius(
                     temperatureCelsius: temperature,
@@ -1774,7 +3378,7 @@ struct ContentView: View {
                    observedCondition.isEmpty == false {
                     displayCondition = observedCondition
                 } else {
-                    displayCondition = forecast.properties.periods.first?.shortForecast ?? "Unknown"
+                    displayCondition = forecast?.properties.periods.first?.shortForecast ?? "Unknown"
                 }
                 observation = WeatherObservation(
                     stationID: selectedLocation.displayStationID,
@@ -1792,10 +3396,13 @@ struct ContentView: View {
                         time: .shortened
                     )
                     )
+                weatherRefreshState = .updated(
+                    latestObservation.properties.timestamp
+                )
                 let formattedFetchSeconds = fetchSeconds.formatted(.number.precision(.fractionLength(2))
                 )
                 
-                networkStatus = "Weather updated successfully in \(formattedFetchSeconds) seconds. \(temperatureHistory.count) graph points loaded. \(forecast.properties.periods.count) forecast hours loaded."
+                networkStatus = "Weather updated successfully in \(formattedFetchSeconds) seconds. \(temperatureHistory.count) graph points loaded. \(forecast?.properties.periods.count ?? 0) forecast hours loaded."
             } else {
                 observation = WeatherObservation(
                     stationID: selectedLocation.displayStationID,
@@ -1804,16 +3411,18 @@ struct ContentView: View {
                     heatIndex: 0.0,
                     relativeHumidity: 0.0,
                     windSpeed: 0.0,
-                    pressure: 0.0,
+                    pressure: nil,
                     wetBulb: 0.0,
                     coolingPotential: 0.0,
                     condition: "No live observation",
                     lastUpdated: "Unavailable"
                 )
+                weatherRefreshState = .failed
                 networkStatus = "No complete live observation found for \(selectedLocation.displayStationID). Forecast still loaded from location coordinates."
             }
         } catch {
             networkStatus = "Request failed: \(error.localizedDescription)"
+            weatherRefreshState = .failed
         }
     }
 }

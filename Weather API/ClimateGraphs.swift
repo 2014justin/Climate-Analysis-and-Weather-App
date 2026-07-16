@@ -90,7 +90,7 @@ enum ThresholdEventMode: String, CaseIterable, Identifiable {
         case .warmAfternoon: ///first spring occurance of a 50 degree temperature
             return [50, 60, 65, 70, 80, 90, 95, 100, 105, 110]
         case .warmAfternoonLockIn: ///after this point, afternoons are expect to reach at least this temp
-            return [40, 45, 50, 55, 60, 65, 70, 75, 80]
+            return [40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100]
         case .mildNights: ///first night in spring that makes it above freezing. NOT the last freeze.
             return [32, 36, 40, 45, 50, 55, 60]
         }

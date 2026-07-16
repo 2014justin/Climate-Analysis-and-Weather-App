@@ -3,7 +3,7 @@ import SwiftUI
 struct StationAdderView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @State private var stationID = ""
+    @State private var stationID: String
     @State private var climateStationID = ""
     @State private var isValidating = false
     @State private var validationMessage = "Enter a station ID such as KBIL."
@@ -15,6 +15,23 @@ struct StationAdderView: View {
     @FocusState private var stationFieldIsFocused: Bool
     
     let onAdd: (GeneratedStationBuildResult) -> Void
+    
+    ///Creates the initializer ContentView is trying to call.
+    init(
+        initialStationID: String = "",
+        onAdd: @escaping (
+            GeneratedStationBuildResult
+        ) -> Void
+    ) {
+        _stationID = State(
+            initialValue:
+                initialStationID
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased()
+        )
+        
+        self.onAdd = onAdd
+    }
 
     var body: some View {
         ScrollView {
@@ -105,10 +122,20 @@ struct StationAdderView: View {
             }
             .padding()
         }
-        .frame(width: 560, height: 500)
+        .frame(width: 560, height: 680)
         .background(DashboardTheme.panel)
         .onAppear {
-            stationFieldIsFocused = true
+            /// Focus the  field only when the ordinary blank Add Sation sheet was opened.
+            /// Makes it easy to build a climate profile upon selection in the Atlas.
+            stationFieldIsFocused = stationID.isEmpty
+        }
+        .task {
+            /// An Atlas station arrives prefilled, so begin its validation workflow automatically
+            guard !stationID.isEmpty else {
+                return
+            }
+            
+            await validateStation()
         }
     }
     
@@ -192,7 +219,7 @@ struct StationAdderView: View {
                     Text(
                         isValidating
                             ? "Building Climate Profile..."
-                            : "Add Selected Station"
+                            : "Build Station"
                     )
                     .bold()
                 }

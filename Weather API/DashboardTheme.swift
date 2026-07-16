@@ -65,11 +65,13 @@ enum DashboardTheme {
     )
 
     static let border = Color.white.opacity(0.10)
+    static let chartGridMajor = Color.white.opacity(0.16)
+    static let chartGridMinor = Color.white.opacity(0.08)
 
     // MARK: - Text
 
     static let textPrimary = Color.white.opacity(0.92)
-    static let textSecondary = Color.white.opacity(0.62)
+    static let textSecondary = Color.white.opacity(0.72)
 
     // MARK: - Scientific data colors
 

@@ -6,12 +6,34 @@ import SwiftUI
 import Charts
 import AppKit
 
+///Add the spread-point model for standard deviation in the normal high/low climate plot.
+private struct AnnualTemperatureSpreadPoint: Identifiable {
+    let dayOfYear: Int
+    let normalLow: Double
+    let normalHigh: Double
+    let lowStandardDeviation: Double?
+    let highStandardDeviation: Double?
+    
+    var id: Int {
+        dayOfYear
+    }
+}
+
 struct ClimateGraphView: View {
     @Binding var graphType: ClimateGraphType
     let location: WeatherLocation
     
+    private let liveSeasonalPhasePoints: [SeasonalPhasePoint]
+    private let smoothedLiveSeasonalPhasePoints: [SeasonalPhasePoint]
+    
     ///Adds stored climate points
     private let climatePoints: [ClimateDayPoint]
+    
+    private let annualTemperatureSpreadPoints: [AnnualTemperatureSpreadPoint]
+    
+    ///Controls the annual temperature spread envelope. Level 2 still displays the inner ±1σ band.
+    @State private var selectedAnnualSigmaLevel = 1
+    
     @State private var keyMonitor: Any?
     @State private var selectedClimatePoint: ClimateDayPoint?
     ///holds the calculated ACIS result
@@ -41,17 +63,26 @@ struct ClimateGraphView: View {
     ///which station the current ACIS rows belong to
     @State private var loadedACISStationID: String?
     
+    /// cehckbox for hysteresis plot live weather
+    @State private var isShowingCurrentWeather = true
+    
     ///Initializer for climate points. This caches the 365 climatepoints once ClimateGraphView opens, in stead of rebuilding
     ///them every time SwiftUI redraws the hysteresis chart.
     init(
         graphType: Binding<ClimateGraphType>,
-        location: WeatherLocation
+        location: WeatherLocation,
+        liveSeasonalPhasePoints: [SeasonalPhasePoint],
+        smoothedLiveSeasonalPhasePoints: [SeasonalPhasePoint],
+        normalPeriodObservations: [ACISDailyObservation]
     ) {
         
         ///Because graphType is an @Binding, Swift stores the actual wrapper as  graphType.
         self._graphType = graphType
         self.location = location
-        self.climatePoints = (1...365).map { day in
+        self.liveSeasonalPhasePoints = liveSeasonalPhasePoints
+        self.smoothedLiveSeasonalPhasePoints = smoothedLiveSeasonalPhasePoints
+        
+        let climatePoints = (1...365).map { day in
             ClimateDayPoint(
                 dayOfYear: day,
                 normalHigh: location.normalHigh(dayOfYear: day),
@@ -60,6 +91,11 @@ struct ClimateGraphView: View {
                 normalizedSolar: location.normalizedSolarEnergy(dayOfYear: day)
             )
         }
+        self.climatePoints = climatePoints
+        self.annualTemperatureSpreadPoints = Self.makeAnnualTemperatureSpreadPoints(
+            normalPeriodObservations: normalPeriodObservations,
+            climatePoints: climatePoints
+        )
     }
     
     ///threshold buttons can change based on mode: cold nights, first/last warm afternoon, warm afternoon lock in, and
@@ -126,6 +162,58 @@ struct ClimateGraphView: View {
                 fromAverageDayOfYear: riskPoint.fallRiskDay
             )
         }
+    }
+    
+    /// Formatting helper for graph. Let's us verify the calculations before
+    /// drawing endpoint markers on the graph
+    private func observedRangeText(
+        for summary: ACISThresholdSummary
+    ) -> String {
+        let earliestDay: Double?
+        let latestDay: Double?
+        
+        switch selectedThresholdRiskSeason {
+        case .spring:
+            earliestDay = summary.earliestSpringEventDay
+            latestDay = summary.latestSpringEventDay
+        case .fall:
+            earliestDay = summary.earliestFallEventDay
+            latestDay = summary.latestFallEventDay
+        }
+        
+        guard let earliestDay,
+              let latestDay else {
+            return "none"
+        }
+        
+        let earliestText = ACISThresholdCalculator.monthDayText(
+            fromAverageDayOfYear: earliestDay
+        )
+        
+        let latestText = ACISThresholdCalculator.monthDayText(
+            fromAverageDayOfYear: latestDay
+        )
+        
+        return "\(earliestText)-\(latestText)"
+    }
+    
+    /// Joins the spring and fall coordinate branches into one observed annual occurence extent.
+    private func fullObservedExtentText(
+        for summary: ACISThresholdSummary
+    ) -> String {
+        guard let earliestSpringDay = summary.earliestSpringEventDay,
+              let latestFallDay = summary.latestFallEventDay else {
+            return "none"
+        }
+        
+        let earliestText = ACISThresholdCalculator.monthDayText(
+            fromAverageDayOfYear: earliestSpringDay
+        )
+        
+        let latestText = ACISThresholdCalculator.monthDayText(
+            fromAverageDayOfYear: latestFallDay
+        )
+        return "\(earliestText) → \(latestText)"
     }
     
     ///One risk Point might contain: percent: 50 | springRiskDay: 133.0 (may 13) | fallRiskDay: 253.0 (Sep 10)
@@ -463,11 +551,25 @@ struct ClimateGraphView: View {
     ///Helps with the base 10 logic. If the annual minimum is 37, chart will start from y = 37.
     ///If it plateuas at 104 in midsommar, it will max out at 110.
     private var annualTemperatureDomain: ClosedRange<Double> {
-        let allTemperatures = climatePoints.flatMap { point in
+        var allTemperatures = climatePoints.flatMap { point in
             [
                 point.normalHigh,
                 point.normalLow
             ]
+        }
+        
+        let sigmaMultiplier = Double(selectedAnnualSigmaLevel)
+        
+        for point in annualTemperatureSpreadPoints {
+            if let sigma = point.lowStandardDeviation {
+                allTemperatures.append(point.normalLow - sigmaMultiplier * sigma)
+                allTemperatures.append(point.normalLow + sigmaMultiplier * sigma)
+            }
+            
+            if let sigma = point.highStandardDeviation {
+                allTemperatures.append(point.normalHigh - sigmaMultiplier * sigma)
+                allTemperatures.append(point.normalHigh + sigmaMultiplier * sigma)
+            }
         }
         
         guard let minimumTemperature = allTemperatures.min(),
@@ -689,11 +791,73 @@ struct ClimateGraphView: View {
         return nil
     }
     
+    ///Reusable sample standard deviation function
+    private static func sampleStandardDeviation(_ values: [Double]) -> Double? {
+        ///We require at least 10 values
+        guard values.count >= 10 else {
+            return nil
+        }
+        
+        /// Calculate the mean, then do the sum of squared residuals, divide by N - 1 because it is a sample.
+        let mean = values.reduce(0,+) / Double(values.count)
+        let squaredDeviations = values.reduce(0.0) { total, value in
+            total + pow(value - mean, 2)
+        }
+        
+        return sqrt(squaredDeviations / Double(values.count - 1))
+    }
+    
+    ///Annual spread dataset:
+    private static func makeAnnualTemperatureSpreadPoints(
+        normalPeriodObservations: [ACISDailyObservation],
+        climatePoints: [ClimateDayPoint]
+    ) -> [AnnualTemperatureSpreadPoint] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        
+        var observationsByDay: [Int: [ACISDailyObservation]] = [:]
+        
+        for observation in normalPeriodObservations {
+            let components = calendar.dateComponents([.month, .day], from: observation.date)
+            
+            ///For example, observation: July 11, 1997 | Reference date: July 11, 2001 | Climatological day: 192
+            guard let month = components.month,
+                  let day = components.day,
+                  !(month == 2 && day == 29),
+                  let referenceDate = calendar.date(from: DateComponents(year: 2001, month: month, day: day)),
+                  let dayOfYear = calendar.ordinality(of: .day, in: .year, for: referenceDate) else {
+                continue
+            }
+            
+            observationsByDay[dayOfYear, default: []].append(observation)
+        }
+        
+        ///transform every element in climatePoints, collect the transformed elements into a new array, and return
+        ///that entire array from the computed property.
+        return climatePoints.map { point in
+            let observations = observationsByDay[point.dayOfYear] ?? []
+            let maximums = observations.compactMap(\.maximumTemperature)
+            let minimums = observations.compactMap(\.minimumTemperature)
+            
+            return AnnualTemperatureSpreadPoint(
+                dayOfYear: point.dayOfYear,
+                normalLow: point.normalLow,
+                normalHigh: point.normalHigh,
+                lowStandardDeviation: Self.sampleStandardDeviation(minimums),
+                highStandardDeviation: Self.sampleStandardDeviation(maximums)
+            )
+        }
+    }
+    
     /// Helps with hysteresis graph base ten logic
     
     private var hysteresisTemperatureDomain: ClosedRange<Double> {
-        let lowTemperatures = climatePoints.map { point in
-            point.normalLow
+        var lowTemperatures = climatePoints.map(\.normalLow)
+        
+        ///a severe winter push can push the live observations far below the normal curve. This corrects that.
+        if isShowingCurrentWeather {
+            lowTemperatures += liveSeasonalPhasePoints.map(\.minimumTemperature)
+            lowTemperatures += smoothedLiveSeasonalPhasePoints.map(\.minimumTemperature)
         }
         
         guard let minimumTemperature = lowTemperatures.min(),
@@ -727,7 +891,8 @@ struct ClimateGraphView: View {
         let dy = nextPoint.normalLow - previousPoint.normalLow
 
         let xRange = 1.2
-        let yRange = annualTemperatureDomain.upperBound - annualTemperatureDomain.lowerBound
+        let temperatureDomain = hysteresisTemperatureDomain
+        let yRange = temperatureDomain.upperBound - temperatureDomain.lowerBound
 
         let scaledDx = dx / xRange
         let scaledDy = -dy / yRange
@@ -823,6 +988,8 @@ struct ClimateGraphView: View {
                     .foregroundStyle(.white.opacity(0.45))
                 }
             }
+            .dashboardClimatePlotStyle()
+            
             .chartYScale(domain: 0...100)
             .chartXScale(domain: thresholdRiskDateDomain)
             .chartYAxis {
@@ -878,7 +1045,7 @@ struct ClimateGraphView: View {
                     }
                 )
             }
-            .chartBackground { proxy in
+            .chartOverlay { proxy in
                 GeometryReader { geometry in
                     if let selectedThresholdRiskPoint,
                        let anchor = proxy.plotFrame {
@@ -902,10 +1069,11 @@ struct ClimateGraphView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .position(
                             x: plotFrame.origin.x + xPosition + (xPosition > plotFrame.width - 120 ? -54 : 54),
-                            y: plotFrame.origin.y + yPosition + (yPosition < 48 ? 42 : -34)
+                            y: plotFrame.origin.y + yPosition + (yPosition < 80 ? 46 : -42)
                         )
                     }
                 }
+                .allowsHitTesting(false)
             }
             .frame(height: 320)
         }
@@ -925,10 +1093,20 @@ struct ClimateGraphView: View {
                         Text("\(percent.formatted(.number.precision(.fractionLength(0))))%")
                             .fontWeight(.semibold)
                     }
+                    
+                    Text("Observed range")
+                        .fontWeight(.semibold)
+                    
+                    if selectedThresholdEventMode == .warmAfternoonLockIn {
+                        Text("Lock-in status")
+                            .fontWeight(.semibold)
+                    }
                 }
 
                 Divider()
-                    .gridCellColumns(10)
+                    .gridCellColumns(
+                        selectedThresholdEventMode == .warmAfternoonLockIn ? 12 : 11
+                    )
 
                 ForEach(thresholdSummaries, id: \.threshold) { summary in
                     GridRow {
@@ -949,6 +1127,19 @@ struct ClimateGraphView: View {
                                 } ?? "none"
                             )
                             .monospacedDigit()
+                        }
+                        Text(observedRangeText(for: summary))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        
+                        if selectedThresholdEventMode == .warmAfternoonLockIn {
+                            if summary.hasMeaningfulSpringLockIn {
+                                Label("Established", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Label("No true lock-in", systemImage: "xmark.circle")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -1109,6 +1300,10 @@ struct ClimateGraphView: View {
         }
         .padding()
         .frame(minWidth: 1000, minHeight: 720)
+        .background(DashboardTheme.panel)
+        .foregroundStyle(DashboardTheme.textPrimary)
+        .tint(DashboardTheme.observedTemperature
+        )
         ///The next .onappear block is very important for keyboard navigation of the app
         .task(id: "\(location.acisStationID)-\(graphType.id)") {
             await loadACISDataIfNeeded()
@@ -1151,11 +1346,135 @@ struct ClimateGraphView: View {
         }
     }
     
+    ///New wrapper that allows us to see ±1σ or 2 standard deviations in the main climate annual temperature curve.
+    private var annualTemperatureChart: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Spacer()
+                
+                Text("Temperature Spread")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                
+                Picker("Temperature Spread", selection: $selectedAnnualSigmaLevel) {
+                    Text("±1σ").tag(1)
+                    Text("±2σ").tag(2)
+                }
+                .labelsHidden()
+                .pickerStyle(.radioGroup)
+                .horizontalRadioGroupLayout()
+                .fixedSize()
+            }
+            
+            annualTemperaturePlot
+        }
+    }
+    
     /// This function actually plots the T min and T max for a climate site and graphs it
     /// under our climate UI.
-    private var annualTemperatureChart: some View {
+    private var annualTemperaturePlot: some View {
         Chart {
-            ///Adds T max (red) but cursor-able
+            ///Adds ±1σ and 2 sigma bands.
+            if selectedAnnualSigmaLevel == 2 {
+                ///Minimum temperatures plus minus 2 sigma.
+                ForEach(annualTemperatureSpreadPoints) { point in
+                    if let sigma = point.lowStandardDeviation {
+                        AreaMark(
+                            x: .value("Day", point.dayOfYear),
+                            yStart: .value("Tmin - 2σ", point.normalLow - 2.0 * sigma),
+                            yEnd: .value("Tmin + 2σ", point.normalLow + 2.0 * sigma),
+                            series: .value("Band", "Tmin ±2σ")
+                        )
+                        .foregroundStyle(Color.white.opacity(0.06))
+                    }
+                }
+                
+                ///Maximum temperatures plus minus 2 sigma.
+                ForEach(annualTemperatureSpreadPoints) { point in
+                    if let sigma = point.highStandardDeviation {
+                        AreaMark(
+                            x: .value("Day", point.dayOfYear),
+                            yStart: .value("Tmax - 2σ", point.normalHigh - 2.0 * sigma),
+                            yEnd: .value("Tmax + 2σ", point.normalHigh + 2.0 * sigma),
+                            series: .value("Band", "Tmax ±2σ")
+                        )
+                        .foregroundStyle(Color.white.opacity(0.06))
+                    }
+                }
+            }
+            
+            ///T min plus minus 1 sigma
+            ForEach(annualTemperatureSpreadPoints) { point in
+                if let sigma = point.lowStandardDeviation {
+                    AreaMark(
+                        x: .value("Day", point.dayOfYear),
+                        yStart: .value("Tmin - 1σ", point.normalLow - sigma),
+                        yEnd: .value("Tmin + 1σ", point.normalLow + sigma),
+                        series: .value("Band", "Tmin ±1σ")
+                    )
+                    .foregroundStyle(Color.white.opacity(0.14))
+                }
+            }
+            
+            ///T max plus minus 1 sigma
+            ForEach(annualTemperatureSpreadPoints) { point in
+                if let sigma = point.highStandardDeviation {
+                    AreaMark(
+                        x: .value("Day", point.dayOfYear),
+                        yStart: .value("Tmax - 1σ", point.normalHigh - sigma),
+                        yEnd: .value("Tmax + 1σ", point.normalHigh + sigma),
+                        series: .value("Band", "Tmax ±1σ")
+                    )
+                    .foregroundStyle(Color.white.opacity(0.14))
+                }
+            }
+            
+            /// Horizontal 10 °F guides, drawn above the sigma fills.
+            ForEach(
+                Array(stride(from: annualTemperatureDomain.lowerBound,
+                             through: annualTemperatureDomain.upperBound,
+                             by: 10.0)), id: \.self) { temperature in
+                                 RuleMark(y: .value("Temperature grid", temperature))
+                                     .foregroundStyle(DashboardTheme.chartGridMajor)
+                                     .lineStyle(StrokeStyle(lineWidth: 0.65))
+                             }
+            /// Monthly guides, drawn more subtly than temperature guides.
+            ForEach(
+                [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 365],
+                id: \.self) { day in
+                    RuleMark(x: .value("Month grid", day))
+                        .foregroundStyle(DashboardTheme.chartGridMinor)
+                        .lineStyle(StrokeStyle(lineWidth: 0.6, dash: [3,5]))
+                }
+            
+            
+            /// Upper edge of the selected Tmin envelope: unusually warm mornings.
+            ForEach(annualTemperatureSpreadPoints) { point in
+                if let sigma = point.lowStandardDeviation {
+                    LineMark(
+                        x: .value("Day", point.dayOfYear),
+                        y: .value("Warm-night boundary", point.normalLow + Double(selectedAnnualSigmaLevel) * sigma),
+                        series: .value("Boundary", "Tmin upper sigma boundary")
+                    )
+                    .foregroundStyle(DashboardTheme.observedTemperature.opacity(0.58))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, lineCap: .round, dash: [4, 4]))
+                }
+            }
+
+            /// Lower edge of the selected Tmax envelope: unusually cool afternoons.
+            ForEach(annualTemperatureSpreadPoints) { point in
+                if let sigma = point.highStandardDeviation {
+                    LineMark(
+                        x: .value("Day", point.dayOfYear),
+                        y: .value("Cool-afternoon boundary", point.normalHigh - Double(selectedAnnualSigmaLevel) * sigma),
+                        series: .value("Boundary", "Tmax lower sigma boundary")
+                    )
+                    .foregroundStyle(Color.red.opacity(0.58))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, lineCap: .round, dash: [4, 4]))
+                }
+            }
+            
+            ///Adds T max (red) but cursor-able. This is normal temperatures.
             ForEach(climatePoints) { point in
                 LineMark(
                     x: .value("Day", point.dayOfYear),
@@ -1164,6 +1483,7 @@ struct ClimateGraphView: View {
                 )
                 .foregroundStyle(.red)
             }
+            
             ///Adds T min (blue) but cursor-able
             ForEach(climatePoints) { point in
                 LineMark(
@@ -1217,6 +1537,7 @@ struct ClimateGraphView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
+            
             ///Thermal midwinter & thermal midsommar
             if let peakNormalLowPoint,
                let thermalMidsommarWindow,
@@ -1249,6 +1570,8 @@ struct ClimateGraphView: View {
                 }
             }
         }
+        .dashboardClimatePlotStyle()
+        .chartLegend(.hidden)
         .chartXScale(domain: 1...365)
         .chartYScale(domain: annualTemperatureDomain)
         ///Add the cursor hover logic. Renders an invisible rectangle. Calls our complicated hover function from earlier
@@ -1262,7 +1585,14 @@ struct ClimateGraphView: View {
                         return
                     }
                     
-                    selectedClimatePoint = climatePoint(for: hoveredDay)
+                    let hoveredPoint = climatePoint(for: hoveredDay)
+                    
+                    ///Is the newly hovered calendar day different from the day already selected? Avoids an unnecessary redraw.
+                    guard selectedClimatePoint?.dayOfYear != hoveredPoint?.dayOfYear else {
+                        return
+                    }
+                    
+                    selectedClimatePoint = hoveredPoint
                     
                 },
                 onEnded: {
@@ -1272,52 +1602,51 @@ struct ClimateGraphView: View {
         }
         /// Now have it label Jan 1 ... Dec 1, Dec 31
         .chartXAxis {
-            AxisMarks(values: [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 365]) { value in
-                AxisGridLine()
-                AxisTick()
+            AxisMarks(
+                position: .bottom,
+                ///Jan 1, Feb 1, ...
+                values: [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 365]
+            ) { value in
+                
+                AxisTick(length: 4, stroke: StrokeStyle(lineWidth: 0.8))
+                    .foregroundStyle(Color.white.opacity(0.24))
                 
                 if let day = value.as(Int.self) {
-                    switch day {
-                    case 1:
-                        AxisValueLabel("Jan 1")
-                    case 32:
-                        AxisValueLabel("Feb 1")
-                    case 60:
-                        AxisValueLabel("Mar 1")
-                    case 91:
-                        AxisValueLabel("Apr 1")
-                    case 121:
-                        AxisValueLabel("May 1")
-                    case 152:
-                        AxisValueLabel("Jun 1")
-                    case 182:
-                        AxisValueLabel("Jul 1")
-                    case 213:
-                        AxisValueLabel("Aug 1")
-                    case 244:
-                        AxisValueLabel("Sep 1")
-                    case 274:
-                        AxisValueLabel("Oct 1")
-                    case 305:
-                        AxisValueLabel("Nov 1")
-                    case 335:
-                        AxisValueLabel("Dec 1")
-                    case 365:
-                        AxisValueLabel("Dec 31")
-                    default:
-                        AxisValueLabel("")
-                    }
+                    AxisValueLabel(monthDayLabel(for: day))
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
                 }
             }
         }
+        
+        ///Gives the Y axis nice gridlines by 10 F.
         .chartYAxis {
-            AxisMarks(values: .stride(by: 10))
+            AxisMarks(position: .trailing, values: .stride(by: 10)) { _ in
+               
+                AxisTick(length: 4, stroke: StrokeStyle(lineWidth: 0.8))
+                    .foregroundStyle(Color.white.opacity(0.30))
+                
+                AxisValueLabel()
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
         }
         .chartXAxisLabel("Day of Year")
         .chartYAxisLabel("Temperature (°F)")
     }
-    /// Add the seasonal hysteresis phase space with arrow seasonal progression
+    
     private var seasonalHysteresisChart: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Show Current Weather Year", isOn: $isShowingCurrentWeather)
+                .toggleStyle(.checkbox)
+                .tint(DashboardTheme.observedTemperature)
+            
+            seasonalHysteresisPlot
+        }
+    }
+    
+    /// Add the seasonal hysteresis phase space with arrow seasonal progression
+    private var seasonalHysteresisPlot: some View {
         Chart {
             ///Adds the points themselves.
             ForEach(climatePoints) { point in
@@ -1326,6 +1655,37 @@ struct ClimateGraphView: View {
                     y: .value("Normal Low", point.normalLow)
                 )
                 .foregroundStyle(.purple)
+            }
+            
+            ///Adds the live weather-year layers
+            if isShowingCurrentWeather {
+                ForEach(smoothedLiveSeasonalPhasePoints) { point in
+                    LineMark(
+                        x: .value("Normalized Solar", point.normalizedSolar),
+                        y: .value("Smoothed Tmin", point.minimumTemperature),
+                        series: .value("Series", "Current Weather Year")
+                    )
+                    .foregroundStyle(DashboardTheme.observedTemperature)
+                    .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                }
+                
+                ForEach(liveSeasonalPhasePoints) { point in
+                    PointMark(
+                        x: .value("Normalized Solar", point.normalizedSolar),
+                        y: .value("Observed Tmin", point.minimumTemperature)
+                    )
+                    .foregroundStyle(Color.white.opacity(0.38))
+                    .symbolSize(14)
+                }
+                
+                if let latestPoint = smoothedLiveSeasonalPhasePoints.last {
+                    PointMark(
+                        x: .value("Latest Solar", latestPoint.normalizedSolar),
+                        y: .value("Latest Smoothed Tmin", latestPoint.minimumTemperature)
+                    )
+                    .foregroundStyle(DashboardTheme.observedTemperature)
+                    .symbolSize(60)
+                }
             }
             
             if let selectedClimatePoint {
@@ -1428,6 +1788,7 @@ struct ClimateGraphView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
+        .dashboardClimatePlotStyle()
         .chartXScale(domain: -0.1...1.1)
         .chartYScale(domain: hysteresisTemperatureDomain)
         .chartOverlay { proxy in
@@ -1562,6 +1923,19 @@ struct ClimateGraphView: View {
         return "\(value.formatted(.number.precision(.fractionLength(0))))°F"
     }
     
+    ///Give our weather year plot proper gridlines
+    private var weatherYearTemperatureGridValues: [Double] {
+        let domain = weatherYearTemperatureDomain
+        
+        return Array(
+            stride(
+                from: domain.lowerBound,
+                through: domain.upperBound,
+                by: 10.0
+            )
+        )
+    }
+    
     private var weatherYearChart: some View {
         Chart {
             ///Normal T max & T min
@@ -1575,6 +1949,39 @@ struct ClimateGraphView: View {
                     .foregroundStyle(Color.yellow.opacity(0.22))
                 }
             }
+            /// Horizontal 10°F guides drawn above the normal-range fill.
+            ForEach(
+                weatherYearTemperatureGridValues,
+                id: \.self
+            ) { temperature in
+                RuleMark(
+                    y: .value("Temperature grid", temperature)
+                )
+                .foregroundStyle(DashboardTheme.chartGridMajor)
+                .lineStyle(StrokeStyle(lineWidth: 0.65))
+            }
+
+            /// Monthly guides drawn above the normal-range fill.
+            ForEach(
+                weatherYearDays.filter { day in
+                    Calendar.current.component(
+                        .day,
+                        from: day.date
+                    ) == 1
+                 }
+            ) { day in
+                RuleMark(
+                    x: .value("Month grid", day.date)
+                )
+                .foregroundStyle(DashboardTheme.chartGridMinor)
+                .lineStyle(
+                    StrokeStyle(
+                        lineWidth: 0.6,
+                        dash: [3, 5]
+                    )
+                )
+            }
+            
             ///Observed highs/lows in blue
             if selectedWeatherYearOverlays.contains(.observedRange) {
                 ForEach(weatherYearDays) { day in
@@ -1712,7 +2119,7 @@ struct ClimateGraphView: View {
                 }
             }
         }
-        
+        .dashboardClimatePlotStyle()
        
         ///Chart overlay . Gives us the mouse position inside the plot area. proxy.value(atX:as:) converts the cursor's x position back
         ///into a Date. Then weatherYearDay(closestTo:) clamps it to the nearest real calendar date. Allows user
@@ -1739,13 +2146,41 @@ struct ClimateGraphView: View {
         .chartYScale(domain: weatherYearTemperatureDomain)
         .chartXAxis {
             AxisMarks(values: .stride(by: .month)) {
-                AxisGridLine()
+                AxisGridLine(
+                    stroke: StrokeStyle(
+                        lineWidth: 0.6,
+                        dash: [3,5]
+                    )
+                )
+                .foregroundStyle(DashboardTheme.chartGridMinor)
+                
                 AxisTick()
-                AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                
+                AxisValueLabel(
+                    format: .dateTime.month(.abbreviated).day()
+                )
+                .font(.caption)
+                .foregroundStyle(DashboardTheme.textSecondary)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .trailing, values: .stride(by: 10))
+            AxisMarks(
+                position: .trailing,
+                values: .stride(by: 10)
+            ) {_ in
+                AxisGridLine(
+                    stroke: StrokeStyle(lineWidth: 0.65)
+                )
+                .foregroundStyle(DashboardTheme.chartGridMajor)
+                
+                AxisTick()
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                
+                AxisValueLabel()
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
         }
         .frame(height: 480)
     }
@@ -1773,5 +2208,14 @@ struct ClimateGraphView: View {
         let upperBound = ceil((maximum + 0) / 10) * 10
         
         return lowerBound...upperBound
+    }
+}
+
+/// Creates one reusable plot-background modifier
+private extension View {
+    func dashboardClimatePlotStyle() -> some View {
+        chartPlotStyle { plotArea in
+            plotArea.background(DashboardTheme.plotArea)
+        }
     }
 }

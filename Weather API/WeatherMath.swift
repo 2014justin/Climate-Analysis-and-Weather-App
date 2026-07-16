@@ -26,6 +26,14 @@ enum WeatherMath {
     ) -> Double {
         return kilometersPerHour * 0.621371
     }
+    
+    /// Convert aviation wind speed from knots to miles per hour.
+    static func knotsToMilesPerHour(
+        _ knots: Double
+    ) -> Double {
+        return knots * 1.15078
+    }
+    
     /// Convert Pa to inHg
     
     static func pascalsToInchesOfMercury( _ pascals: Double) -> Double {
