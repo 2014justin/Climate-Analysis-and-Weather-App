@@ -12,25 +12,59 @@ struct StationAdderView: View {
         GeneratedClimateCandidateSearchResult?
     
     @State private var selectedCandidateStationID: String?
+    @State private var validatedStationSource: AtlasStationSource?
     @FocusState private var stationFieldIsFocused: Bool
     
     let onAdd: (GeneratedStationBuildResult) -> Void
     
+    private let initialStationSource: AtlasStationSource?
+    
     ///Creates the initializer ContentView is trying to call.
     init(
-        initialStationID: String = "",
+        initialStationSource:
+            AtlasStationSource? = nil,
         onAdd: @escaping (
             GeneratedStationBuildResult
         ) -> Void
     ) {
+        self.initialStationSource =
+            initialStationSource
+        
         _stationID = State(
             initialValue:
-                initialStationID
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                initialStationSource?
+                    .stationID
+                    .trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
                     .uppercased()
+                ?? ""
         )
         
         self.onAdd = onAdd
+    }
+    
+    private func stationSource(
+        for safeStationID: String
+    ) -> AtlasStationSource {
+        let originalStationID =
+            initialStationSource?
+                .stationID
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased()
+        
+        if let initialStationSource,
+           originalStationID == safeStationID {
+            return initialStationSource
+        }
+        
+        /// Manually-entered IDs retain the existing US-station behavior
+        ///
+        return AtlasStationSource(
+            countryCode: "US",
+            providerID: "manualEntry",
+            stationID: safeStationID
+        )
     }
 
     var body: some View {
@@ -405,9 +439,11 @@ struct StationAdderView: View {
     @MainActor
     private func addSelectedCandidate() async {
         guard let searchResult = candidateSearchResult,
-              let selectedCandidateStationID  else {
+              let selectedCandidateStationID,
+                let validatedStationSource
+        else {
             validationMessage =
-            "Select a climate station before adding."
+                "Select a climate station before adding."
             return
         }
         
@@ -423,20 +459,18 @@ struct StationAdderView: View {
         
         do {
             guard let result =
-                    try await GeneratedClimateProfileBuilder
+                    try await GeneratedClimateProfileBuildRouter
                         .buildProfile(
-                            weatherStationID:
-                                searchResult.weatherStationID,
-                            climateStationID:
-                                selectedCandidateStationID,
+                            for: validatedStationSource,
+                            climateStationID: selectedCandidateStationID,
                             progress: { message in
                                 validationMessage = message
                             }
-                        ) else {
+                        )
+            else {
                 validationMessage =
                     selectedCandidateStationID
-                    + " did not produce 365 usable "
-                    + "daily normals."
+                    + " did not produce 365" + "daily normals."
                 return
             }
             
@@ -459,6 +493,10 @@ struct StationAdderView: View {
                 validationMessage = "Enter a station ID."
                 return
             }
+        
+            let source = stationSource(for: safeStationID)
+        
+            validatedStationSource = source
 
             isValidating = true
             buildResult = nil
@@ -477,9 +515,9 @@ struct StationAdderView: View {
                 
                 if safeClimateStationID.isEmpty {
                     let searchResult =
-                        try await GeneratedClimateProfileBuilder
+                        try await GeneratedClimateProfileBuildRouter
                             .findClimateCandidates(
-                                weatherStationID: safeStationID,
+                                for: source,
                                 progress: { message in
                                     validationMessage = message
                                 }
@@ -508,17 +546,19 @@ struct StationAdderView: View {
                     return
                 }
                 
-                if let result = try await GeneratedClimateProfileBuilder.buildProfile(
-                    weatherStationID: safeStationID,
-                    climateStationID: safeClimateStationID,
-                    progress: { message in
-                        validationMessage = message
-                    }
-                ) {
+                if let result =
+                    try await GeneratedClimateProfileBuildRouter
+                        .buildProfile(
+                            for: source,
+                            climateStationID: safeClimateStationID,
+                            progress: { message in
+                                validationMessage = message
+                            }
+                        ) {
                     buildResult = result
                     validationMessage = "Valid climate profile found."
                 } else {
-                    validationMessage = "\(safeStationID) loaded, but did not produce 365 usable daily normals."
+                    validationMessage = "\(safeStationID) loaded but did not produce 365 usable daily normals."
                 }
             } catch {
                 validationMessage = "\(safeStationID) failed: \(error.localizedDescription)"

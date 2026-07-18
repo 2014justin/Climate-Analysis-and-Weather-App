@@ -122,35 +122,36 @@ enum GeneratedClimateNormalCalculator {
     
     ///multiple years from the same calendar day are being used, like 2020-07-15, 1998-07-15 and 2014-07-15
     ///Maps any real date onto a standard 365-day year. Jan 1, 1991 -> Day 1 . Jan 1, 2007 -> day 1
-    private static func referenceDayOfYear(from date: Date) -> Int? {
-        let components = calendar.dateComponents([.month, .day], from: date)
-        
-        ///Try to extract the month and day from this Date. If either one is missing, stop and return nil.
-        ///checks whether swift successfully gave us a month and day at all.
-        guard let month = components.month,
-              let day = components.day else {
-            return nil
-        }
-        
-        ///Leap Year
-        if month == 2 && day == 29 {
+    private static func referenceDayOfYear(
+        from date: ClimateDate
+    ) -> Int? {
+        if date.month == 2 && date.day == 29 {
             return nil
         }
         
         guard let referenceDate = calendar.date(
-            from: DateComponents(year: 2001, month: month, day: day)
+            from: DateComponents(
+                year: 2001,
+                month: date.month,
+                day: date.day
+            )
         ) else {
             return nil
         }
         
-        return calendar.ordinality(of: .day, in: .year, for: referenceDate)
+        return calendar.ordinality(
+            of: .day,
+            in: .year,
+            for: referenceDate
+        )
     }
     
     ///Daily Normals
     ///Other code will eventually call this function, so do NOT private it
     ///This takes raw ACIS rows and produces daily normals. We require 20 day-years of data.
+    ///Generalized for ClimateDailyObservation.
     static func dailyNormals(
-        from observations: [ACISDailyObservation],
+        from observations: [ClimateDailyObservation],
         minimumSampleCount: Int = 20
     ) -> [GeneratedDailyClimateNormal] {
         ///highsByDay is a nested array. For example the 0th component might be:
@@ -162,19 +163,33 @@ enum GeneratedClimateNormalCalculator {
         for observation in observations {
             
             ///If this obs cannot be mapped onto a normal 365-day year, skip. This catches Feb 29 leap year.
-            guard let dayOfYear = referenceDayOfYear(from: observation.date) else {
+            guard let dayOfYear = referenceDayOfYear(from: observation.localDate) else {
                 continue
             }
             
             ///append adds one item to the end of an array. Adds the temperature value to that day's pile
             ///"Find the array of high temperatures for this day-of-year. If no array exists yet, start with an empty one.
             ///Then add this observation's high temperature
-            if let maximumTemperature = observation.maximumTemperature {
-                highsByDay[dayOfYear, default: []].append(maximumTemperature)
+            if let maximumTemperature =
+                    observation
+                        .maximumTemperature
+                        .usableFahrenheit {
+                
+                highsByDay[
+                    dayOfYear,
+                    default: []
+                ].append(maximumTemperature)
             }
             
-            if let minimumTemperature = observation.minimumTemperature {
-                lowsByDay[dayOfYear, default: []].append(minimumTemperature)
+            if let minimumTemperature =
+                observation
+                    .minimumTemperature
+                    .usableFahrenheit {
+               
+                lowsByDay[
+                    dayOfYear,
+                    default: []
+                ].append(minimumTemperature)
             }
         }
         
@@ -427,7 +442,7 @@ enum GeneratedClimateNormalCalculator {
         displayName: String,
         latitude: Double,
         longitude: Double,
-        observations: [ACISDailyObservation],
+        observations: [ClimateDailyObservation],
         sourceStartYear: Int,
         sourceEndYear: Int,
     ) -> GeneratedClimateProfile? {

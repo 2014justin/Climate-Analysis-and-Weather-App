@@ -612,7 +612,7 @@ struct SeasonalWindowBar: View {
 /// and fresh StationAdderView state.
 private struct StationAdderRequest: Identifiable {
     let id = UUID()
-    let initialStationID: String
+    let initialStationSource: AtlasStationSource?
 }
 
 struct ContentView: View {
@@ -811,7 +811,7 @@ struct ContentView: View {
                 Menu {
                     Button {
                         stationAdderRequest = StationAdderRequest(
-                            initialStationID: ""
+                            initialStationSource: nil
                         )
                     } label: {
                         Label(
@@ -2803,11 +2803,8 @@ struct ContentView: View {
                         
                         stationAdderRequest =
                             StationAdderRequest(
-                                initialStationID:
-                                    observation
-                                        .station
-                                        .source
-                                        .stationID
+                                initialStationSource:
+                                    observation.station.source
                             )
                     }
                 )
@@ -2938,8 +2935,8 @@ struct ContentView: View {
                 item: $stationAdderRequest
             ) { request in
                 StationAdderView(
-                    initialStationID:
-                        request.initialStationID
+                    initialStationSource:
+                        request.initialStationSource
                 ) { result in
                     saveGeneratedStation(result)
                     selectedAppSection = .dashboard

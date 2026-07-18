@@ -12,6 +12,45 @@ struct ACISDailyObservation: Identifiable {
     let snowfall: Double?
     let snowDepth: Double?
 }
+
+/// Converts ACIS's app-facing record into the provider-neutral daily record
+/// used by the generated-profile pipeline
+enum ACISClimateDailyObservationAdapter {
+    
+    static func observation(
+        from source: ACISDailyObservation
+    ) -> ClimateDailyObservation? {
+        
+        guard let localDate = ClimateDate(utcDate: source.date)
+        else {
+            return nil
+        }
+        
+        return ClimateDailyObservation(
+            localDate: localDate,
+            minimumTemperature: temperatureReading(
+                from: source.minimumTemperature
+            ),
+            maximumTemperature: temperatureReading(
+                from: source.maximumTemperature
+            )
+        )
+    }
+    
+    private static func temperatureReading(
+        from value: Double?
+    ) -> ClimateTemperatureReading {
+        ClimateTemperatureReading(
+            fahrenheit: value,
+            quality: value == nil
+            /// Is value nil? If yes, use .missing. Otherwise use .observed
+                ? .missing
+                : .observed,
+            sourceFlag: nil
+        )
+    }
+}
+
 ///temperature field
 enum ACISTemperatureField {
     case minimum

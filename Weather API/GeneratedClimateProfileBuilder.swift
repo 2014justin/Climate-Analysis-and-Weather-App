@@ -135,11 +135,19 @@ enum GeneratedClimateProfileBuilder {
         let climateDisplayName = climateMetadata?.name ?? displayName
 
         await progress?("Fetching 1991-2020 ACIS daily observations...")
-        let observations = try await ACISClimateService.fetchDailyObservations(
+        
+        let acisObservations =
+        try await ACISClimateService.fetchDailyObservations(
             stationID: finalClimateStationID,
             startDate: "\(normalStartYear)-01-01",
             endDate: "\(normalEndYear)-12-31"
         )
+        
+        let observations =
+            acisObservations.compactMap { observation in
+            ACISClimateDailyObservationAdapter
+                    .observation(from: observation)
+        }
 
         await progress?("Building 1991-2020 normals...")
         guard let profile = GeneratedClimateNormalCalculator.generatedProfile(
