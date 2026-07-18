@@ -771,10 +771,19 @@ enum WeatherAlmanac {
     static func sunTimes(
         for date: Date = Date(),
         latitude: Double,
-        longitude: Double
+        longitude: Double,
+        timeZone: TimeZone = .current
     ) -> SunTimes? {
-        let calendar = Calendar.current
-        let dayNumber = Double(dayOfYear(for: date))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        
+        let dayNumber = Double(
+            calendar.ordinality(
+                of: .day,
+                in: .year,
+                for: date
+            ) ?? 1
+        )
         
         let degreesToRadians = Double.pi / 180.0
         let radiansToDegrees = 180.0 / Double.pi
@@ -814,7 +823,7 @@ enum WeatherAlmanac {
         let hourAngleDegrees = acos(hourAngleInput) * radiansToDegrees
         
         let timeZoneOffsetHours = Double(
-            TimeZone.current.secondsFromGMT(for: date)
+            timeZone.secondsFromGMT(for: date)
         ) / 3600.0
         
         let solarNoonMinutes = 720.0

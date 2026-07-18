@@ -8,7 +8,7 @@ import Foundation
 
 /// Controls the future map picker: primary stations NWS/FAA and allNetworks for more 'niche' stations.
 enum AtlasStationScope: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
-    case primary = "Primary NWS/FAA"
+    case primary = "Aviation Weather"
     case allNetworks = "All Networks"
     
     var id: Self {

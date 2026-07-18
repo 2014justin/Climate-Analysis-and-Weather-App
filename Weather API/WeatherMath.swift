@@ -6,6 +6,28 @@ enum WeatherMath {
     static func celsiusToFahrenheit(_ celsius: Double) -> Double {
         return (celsius * 9.0 / 5.0) + 32.0
     }
+    
+    /// Derives rel humidity from temperature and dew point. We can take the dew point and temperature from the atlas observations,
+    /// calculate the rel humidity, and then pass it into our WeatherMath.heatIndex
+    
+    static func relativeHumidityPercent(
+        temperatureFahrenheit: Double,
+        dewPointFahrenheit: Double
+    ) -> Double {
+        let temperatureCelsius =
+            (temperatureFahrenheit - 32.0) * 5.0 / 9.0
+        
+        let dewPointCelsius =
+            (dewPointFahrenheit - 32.0) * 5.0 / 9.0
+        
+        let relativeHumidity = 100.0 * exp(
+            (17.625 * dewPointCelsius) / (243.04 + dewPointCelsius)
+            - (17.625 * temperatureCelsius ) / (243.04 + temperatureCelsius)
+        )
+        
+        return min(max(relativeHumidity, 0.0), 100.0)
+    }
+    
     /// Calculat the Wet Bulb Temperature in Celsius, to be converted to F later
     static func wetBulbCelsius(
         temperatureCelsius: Double,
@@ -36,7 +58,8 @@ enum WeatherMath {
     
     /// Convert Pa to inHg
     
-    static func pascalsToInchesOfMercury( _ pascals: Double) -> Double {
+    static func pascalsToInchesOfMercury(
+        _ pascals: Double) -> Double {
         return pascals * 0.00029529983071445
     }
     
@@ -87,13 +110,13 @@ enum WeatherMath {
         + (0.00122874 * temperature * temperature * relativeHumidity)
         + (0.00085282 * temperature * relativeHumidity * relativeHumidity)
         - (0.00000199 * temperature * temperature * relativeHumidity * relativeHumidity)
-        /// Heat index  calculation
+        
+        /// Heat index  calculation for dry climates
         if relativeHumidity < 13.0,
            temperature >= 80.0,
            temperature <= 112.0 {
             let adjustment =
-            ((13.0 - relativeHumidity) / 4.0) * sqrt((17.0 - abs(temperature - 95.0)) / 17.0
-            )
+            ((13.0 - relativeHumidity) / 4.0) * sqrt((17.0 - abs(temperature - 95.0)) / 17.0)
             
             heatIndex -= adjustment
             ///use this for humid climates.

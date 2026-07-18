@@ -88,7 +88,8 @@ struct ClimateAtlasView: View {
             AtlasObservationDensityReducer()
                 .observations(
                     from: snapshot,
-                    in: bounds
+                    in: bounds,
+                    allowedCountryCodes: ["US", "CA"]
                 )
 
         visibleObservations =
@@ -290,8 +291,11 @@ struct ClimateAtlasView: View {
                             AtlasStationCardView(
                                 observation: observation
                             ) {
-                                selectedObservationID = nil
+                                guard observation.station.source.countryCode == "US" else {
+                                    return
+                                }
                                 
+                                selectedObservationID = nil
                                 onBuildClimateProfile(observation)
                             }
                         }
