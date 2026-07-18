@@ -31,6 +31,9 @@ struct ClimateAtlasView: View {
     @State private var visibleRegion = ClimateAtlasView.initialRegion
     
     @State private var stationScope: AtlasStationScope = .primary
+    @State private var displayedMetric: AtlasMapMetric = .temperature
+    @State private var annotationSize: AtlasAnnotationSize = .medium
+    @State private var isShowingMapOptions = false
     @State private var selectedObservationID: String?
     @State private var visibleObservations:
         [AtlasObservation] = []
@@ -220,6 +223,27 @@ struct ClimateAtlasView: View {
                         scope: newScope,
                     )
                 }
+                
+                /// Map Options User Interface
+                Button {
+                    isShowingMapOptions.toggle()
+                } label: {
+                    Label(
+                        "Map Options",
+                        systemImage: "gearshape"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .popover(
+                    isPresented: $isShowingMapOptions,
+                    arrowEdge: .top
+                ) {
+                    AtlasMapOptionsView(
+                        displayedMetric: $displayedMetric,
+                        annotationSize: $annotationSize
+                    )
+                }
+                .help("Adjust Atlas display options")
             }
             
             HStack(spacing: 10) {
@@ -271,7 +295,11 @@ struct ClimateAtlasView: View {
                                 observation.id
                             }
                         } label: {
-                            AtlasTemperatureAnnotationView(observation: observation)
+                            AtlasTemperatureAnnotationView(
+                                observation: observation,
+                                displayedMetric: displayedMetric,
+                                annotationSize: annotationSize
+                            )
                         }
                         .buttonStyle(.plain)
                         .popover(

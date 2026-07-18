@@ -50,6 +50,12 @@ struct ToggleDewPointActionKey: FocusedValueKey {
 struct ToggleHeatIndexActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
+
+/// Switch between the dashboard and the Atlas.
+struct SelectAppSectionActionKey: FocusedValueKey {
+    typealias Value = (AppSection) -> Void
+}
+
 extension FocusedValues {
     var refreshWeather: (() -> Void)? {
         get {
@@ -71,6 +77,7 @@ extension FocusedValues {
         }
     }
     
+    ///Export weather
     var exportWeather: ((ExportFormat) -> Void)? {
         get {
             self[ExportWeatherActionKey.self]
@@ -80,6 +87,7 @@ extension FocusedValues {
             self[ExportWeatherActionKey.self] = newValue
         }
     }
+    
     ///Forecast Discussion
     var showForecastDiscussion: (() -> Void)? {
         get {
@@ -138,6 +146,18 @@ extension FocusedValues {
             self[ToggleHeatIndexActionKey.self] = newValue
         }
     }
+    
+    /// Add SelectApp focus to FocusedValues
+    
+    var selectAppSection: ((AppSection) -> Void)? {
+        get {
+            self[SelectAppSectionActionKey.self]
+        }
+        
+        set {
+            self[SelectAppSectionActionKey.self] = newValue
+        }
+    }
 }
 
 struct WeatherCommands: Commands {
@@ -149,8 +169,24 @@ struct WeatherCommands: Commands {
     @FocusedValue(\.selectLocation) private var selectLocation
     @FocusedValue(\.toggleDewPoint) private var toggleDewPoint
     @FocusedValue(\.toggleHeatIndex) private var toggleHeatIndex
+    @FocusedValue(\.selectAppSection) private var selectAppSection
+    
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            
+            /// Switch between Atlas and Dashboard
+            Button("Show Dashboard") {
+                selectAppSection?(.dashboard)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(selectAppSection == nil)
+            
+            Button("Show Climate Atlas") {
+                selectAppSection?(.atlas)
+            }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .disabled(selectAppSection == nil)
+            
             Button("Refresh Weather") {
                 refreshWeather?()
             }
@@ -210,7 +246,7 @@ struct WeatherCommands: Commands {
             Button("Toggle Dew Point") {
                 toggleDewPoint?()
             }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .keyboardShortcut("t", modifiers: [.command, .shift])
             .disabled(toggleDewPoint == nil)
 
             Button("Toggle Heat Index") {
@@ -659,7 +695,8 @@ struct ContentView: View {
         guard let sunTimes = WeatherAlmanac.sunTimes(
             for: now,
             latitude: selectedLocation.latitude,
-            longitude: selectedLocation.longitude
+            longitude: selectedLocation.longitude,
+            timeZone: selectedLocation.timeZone
         ) else {
             return .day
         }
@@ -759,16 +796,12 @@ struct ContentView: View {
                 .font(.largeTitle)
             /// Gives the application a text identifying itself as a 'weather dashboard'
             HStack(spacing: 8) {
-                Picker(
-                    "Location",
-                    selection: $selectedLocation
-                ) {
-                    ForEach(availableLocations) { location in
-                        Text(location.name)
-                            .tag(location)
-                    }
-                }
-                .pickerStyle(.menu)
+                Text("Location")
+                
+                StationLibraryPicker(
+                    selection: $selectedLocation,
+                    locations: availableLocations
+                )
                 .onChange(of: selectedLocation) {
                     Task {
                         await refreshWeather()
@@ -2329,7 +2362,8 @@ struct ContentView: View {
         
         let sunTimes = WeatherAlmanac.sunTimes(
             latitude: selectedLocation.latitude,
-            longitude: selectedLocation.longitude
+            longitude: selectedLocation.longitude,
+            timeZone: selectedLocation.timeZone
         )
         let sunFormatter = DateFormatter()
         sunFormatter.timeStyle = .short
@@ -2847,6 +2881,10 @@ struct ContentView: View {
             .focusedSceneValue(\.showClimateGraph) {
                 selectedClimateGraph = .annualTemperatureCurve
                 activeClimateGraph = .annualTemperatureCurve
+            }
+        
+            .focusedSceneValue(\.selectAppSection) { section in
+                selectedAppSection = section
             }
         
             ///Heat index + Dew point graph toggle shortcut

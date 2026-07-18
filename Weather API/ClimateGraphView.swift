@@ -50,7 +50,7 @@ struct ClimateGraphView: View {
     @State private var selectedWeatherYearDay: WeatherYearDay?
     @State private var thresholdOutputMode = ThresholdOutputMode.graph
     @State private var thresholdObservations: [ACISDailyObservation] = []
-    @State private var selectedWeatherYear = 2020
+    @State private var selectedWeatherYear = 2026
     @State private var weatherYearDays: [WeatherYearDay] = []
     @State private var weatherYearRecordInfo: WeatherYearRecordInfo?
     @State private var selectedWeatherYearOverlays: Set<WeatherYearOverlay> = [
@@ -107,7 +107,9 @@ struct ClimateGraphView: View {
     private func thresholdText(_ threshold: Double) -> String {
         threshold.formatted(.number.precision(.fractionLength(0)))
     }
-
+    
+    /// Filter out the threshold presets we are not using. For example, cold nights = [20, 28, 32, 36, 40, 45]
+    /// But selectedThresholds might be = [28, 32, 40]
     private var sortedSelectedThresholds: [Double] {
         thresholdPresets.filter { threshold in
             selectedThresholds.contains(threshold)
@@ -121,15 +123,20 @@ struct ClimateGraphView: View {
 
         return selectedTexts.isEmpty ? "none" : selectedTexts.joined(separator: ", ")
     }
-    ///makes it possible to select mult temperatures
+    ///makes it possible to select mult temperatures. Ensures the user can never deselect everything.
     private func toggleThreshold(_ threshold: Double) {
-        if selectedThresholds.contains(threshold) {
-            if selectedThresholds.count > 1 {
-                selectedThresholds.remove(threshold)
-            }
-        } else {
+        /// Asks is the clicked threshold (like 32 F) already selected? Only allows us to deselect a threshold if there
+        /// stands at least one selected threshold.
+        guard selectedThresholds.contains(threshold) else {
             selectedThresholds.insert(threshold)
+            return
         }
+        
+        guard selectedThresholds.count > 1 else {
+            return
+        }
+        
+        selectedThresholds.remove(threshold)
     }
     
     private func resetThresholdsForSelectedMode() {
@@ -153,10 +160,13 @@ struct ClimateGraphView: View {
         season: ThresholdRiskSeason
     ) -> String {
         switch season {
+        /// Shows the spring number, i.e. last spring freeze.
         case .spring:
             return ACISThresholdCalculator.monthDayText(
                 fromAverageDayOfYear: riskPoint.springRiskDay
             )
+        
+        /// Shows the fall number, e.g. first fall freeze.
         case .fall:
             return ACISThresholdCalculator.monthDayText(
                 fromAverageDayOfYear: riskPoint.fallRiskDay
@@ -362,6 +372,7 @@ struct ClimateGraphView: View {
             from: sourceObservations
         )
     }
+    
     ///async means the function is allowed to pause while waiting for network data.
     ///basically go get ACIS data, save it, then calculate summary.
     private func loadThresholdSummary() async {
@@ -585,7 +596,7 @@ struct ClimateGraphView: View {
 
     
     ///Hysteresis point function
-    ///The moust is hovering near some point on the hysteresis graph. Which actual calendar day on our
+    ///The mouse is hovering near some point on the hysteresis graph. Which actual calendar day on our
     ///climate loop is closest to that moust position??
     ///Which day's (s, T-min) point is geometrically closest to the cursor??
     ///So we have to use pythagorean distance
@@ -634,6 +645,7 @@ struct ClimateGraphView: View {
             point.dayOfYear == dayOfYear
         }
     }
+    
     ///Define hover rectangle function so we can define it once and use it on any graph without having
     ///Calculate the seasonal memory index defined as the integral from 1 to 365 of T min(t) ds
 
@@ -668,6 +680,7 @@ struct ClimateGraphView: View {
         
         return abs(area)
     }
+    
     ///Show the maximum eigendate chord from the code.
     private var maximumEigendateChord: EigendateChordResult? {
         guard let solarMaximumPoint = climatePoints.max(by: { first, second in

@@ -98,8 +98,10 @@ enum ThresholdEventMode: String, CaseIterable, Identifiable {
     
     var field: ACISTemperatureField {
         switch self {
+        /// Cold nights & mild nights -> T min
         case .coldNights, .mildNights:
             return .minimum
+        /// Hot afternoons -> T max
         case .warmAfternoon, .warmAfternoonLockIn:
             return .maximum
         }
@@ -107,10 +109,18 @@ enum ThresholdEventMode: String, CaseIterable, Identifiable {
     
     var comparison: ACISThresholdComparison {
         switch self {
+            
+        /// T min < = threshold (like 32)
         case .coldNights:
             return .lessThanOrEqual
+            
+        /// T max > = threshold (like 80). Usually first occurance of.
+        /// mildNights can tell you the first time in spring that a morning low remains
+        /// above the freezing mark, for example.
         case .warmAfternoon, .mildNights:
             return .greaterThanOrEqual
+        
+        /// T max >= threshold
         case .warmAfternoonLockIn:
             return .lessThan
         }

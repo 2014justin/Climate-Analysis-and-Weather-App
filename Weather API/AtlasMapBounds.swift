@@ -5,7 +5,8 @@ import Foundation
 /// Providers use different bounding-box argument orders, so the edges
 /// remain explicitly named until a provider constructs its own request.
 ///
-
+/// This struct bundles cached observations, cached geographic coverage, the freshness interval,
+/// and rules for storing, retrieving, and expiring entries.
 struct AtlasMapBounds: Codable, Hashable, Sendable {
     let north: Double
     let south: Double

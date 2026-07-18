@@ -52,6 +52,8 @@ enum ACISSeasonEventChoice {
     case first
     case last
     
+    /// Date is an optional for output because a location like Miami FL might not have a definite
+    /// first and last freeze. So it coalesces between seasons and no true boundary exists.
     func date(from dates: [Date]) -> Date? {
         switch self {
         case .first:
@@ -68,7 +70,9 @@ enum ACISSeasonEventChoice {
 struct ACISThresholdSeason: Identifiable {
     let id = UUID()
     let year: Int
-    let lastSpringDate: Date?
+    
+    /// Stored properties for one year's spring & fall events
+    let springEventDate: Date?
     let firstFallDate: Date?
 }
 ///custom struct that returns threshold percent after/before a certain date.
@@ -97,9 +101,11 @@ struct ACISThresholdSummary {
     let thresholdRiskPoints: [ACISThresholdRiskPoint]
     
     var earliestSpringEventDay: Double? {
+        
+        /// Spring Dates used for the earliest & latest observed dates
         ACISThresholdCalculator.percentileDayOfYear(
             from: seasons.compactMap { season in
-                season.lastSpringDate
+                season.springEventDate
             },
             percentile: 0.0
         )
@@ -108,7 +114,7 @@ struct ACISThresholdSummary {
     var latestSpringEventDay: Double? {
         ACISThresholdCalculator.percentileDayOfYear(
             from: seasons.compactMap { season in
-                season.lastSpringDate
+                season.springEventDate
             },
             percentile: 100.0
         )
@@ -1006,7 +1012,7 @@ enum ACISThresholdCalculator {
         }
         /// last spring date is when the latest 32 F morning was found in the spring column, hence the max
         /// first fall date is when the earliest 32 F morning was found in the fall column, hence the minimum
-        let lastSpringDate = springEventChoice.date(
+        let springEventDate = springEventChoice.date(
             from: springObservations.map { $0.date }
         )
 
@@ -1016,7 +1022,7 @@ enum ACISThresholdCalculator {
         
         return ACISThresholdSeason(
             year: year,
-            lastSpringDate: lastSpringDate,
+            springEventDate: springEventDate,
             firstFallDate: firstFallDate
         )
     }
@@ -1111,7 +1117,7 @@ enum ACISThresholdCalculator {
         percentChanceAfter: Double
     ) -> Double? {
         let springDates = seasons.compactMap { season in
-            season.lastSpringDate
+            season.springEventDate
         }
         
         let percentile = 100.0 - percentChanceAfter
@@ -1121,7 +1127,8 @@ enum ACISThresholdCalculator {
             percentile: percentile
         )
     }
-    ///calc fall freeze risk
+    ///calc fall freeze risk. Function accepts the historical seasons and a requested percent change that the fall event
+    ///occurs before the returned date. Returns an (optional) day of the year.
     static func fallThresholdRiskDay(
         from seasons: [ACISThresholdSeason],
         percentChanceBefore: Double
@@ -1160,9 +1167,9 @@ enum ACISThresholdCalculator {
         let calendar = Calendar(identifier: .gregorian)
         
         let lengths = seasons.compactMap { season -> Int? in
-            guard let lastSpringDate = season.lastSpringDate,
+            guard let springEventDate = season.springEventDate,
                   let firstFallDate = season.firstFallDate,
-                  let springDay = calendar.ordinality(of: .day, in: .year, for: lastSpringDate),
+                  let springDay = calendar.ordinality(of: .day, in: .year, for: springEventDate),
                   let fallDay = calendar.ordinality(of: .day, in: .year, for: firstFallDate) else {
                 return nil
             }
@@ -1204,13 +1211,13 @@ enum ACISThresholdCalculator {
         ///So both spring and fall must have a freeze event to count.
         ///Miami rould return nil here for most years as they can go decades without a freeze.
         let completeSeasonCount = seasons.filter { season in
-            season.lastSpringDate != nil && season.firstFallDate != nil
+            season.springEventDate != nil && season.firstFallDate != nil
         }.count
         ///Next two constants are good for super warm climates that don't have a guaranteed freeze.
         ///since there might be a spring freeze but no corresponding fall freeze. Locations like
         ///Phoenix , AZ and Miami FL.
         let springEventCount = seasons.filter { season in
-            season.lastSpringDate != nil
+            season.springEventDate != nil
         }.count
         
         let fallEventCount = seasons.filter { season in
@@ -1218,7 +1225,7 @@ enum ACISThresholdCalculator {
         }.count
         
         let springDates = seasons.compactMap { season in
-            season.lastSpringDate
+            season.springEventDate
         }
         
         let fallDates = seasons.compactMap { season in

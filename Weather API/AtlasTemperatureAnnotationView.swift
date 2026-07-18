@@ -5,17 +5,42 @@ import SwiftUI
 
 struct AtlasTemperatureAnnotationView: View {
     let observation: AtlasObservation
+    let displayedMetric: AtlasMapMetric
+    let annotationSize: AtlasAnnotationSize
     
-    private var roundedTemperature: Int {
-        Int(
-            observation.temperatureFahrenheit.rounded()
-        )
+    private var displayedValue: Double? {
+        switch displayedMetric {
+        case .temperature:
+            return observation.temperatureFahrenheit
+        case .dewPoint:
+            return observation.dewPointFahrenheit
+        }
+    }
+    
+    private var displayedText: String {
+        guard let displayedValue else {
+            return "-"
+        }
+        
+        return "\(Int(displayedValue.rounded()))"
+    }
+    
+    private var accessibilityValue: String {
+        guard let displayedValue else {
+            return "\(displayedMetric.rawValue) unavailable"
+        }
+        
+        return "\(displayedMetric.rawValue), \(Int(displayedValue.rounded())) °F"
     }
     
     /// Color-coded temperatures. Cold temperatures should look 'cold'. Hot temperatures
     /// should look 'hot'
-    private var temperatureColor: Color {
-        switch observation.temperatureFahrenheit {
+    private var displayedValueColor: Color {
+        guard let displayedValue else {
+            return DashboardTheme.textSecondary
+        }
+        
+        switch displayedValue {
             
         case ..<0:
             return Color(
@@ -97,24 +122,24 @@ struct AtlasTemperatureAnnotationView: View {
     }
     
     var body: some View {
-        Text("\(roundedTemperature)")
+        Text(displayedText)
             .font(
                 .system(
-                    size: 14,
+                    size: 14 * annotationSize.scale,
                     weight: .bold,
                     design: .rounded
                 )
             )
             .monospacedDigit()
-            .foregroundStyle(temperatureColor)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .foregroundStyle(displayedValueColor)
+            .padding(.horizontal, 5 * annotationSize.scale)
+            .padding(.vertical, 2 * annotationSize.scale)
             .background(
                 Color.black.opacity(0.72),
-                in: RoundedRectangle(cornerRadius: 5)
+                in: RoundedRectangle(cornerRadius: 5 * annotationSize.scale)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: 5 * annotationSize.scale)
                 .stroke(
                     Color.white.opacity(0.22),
                     lineWidth: 0.75
@@ -122,10 +147,12 @@ struct AtlasTemperatureAnnotationView: View {
             }
             .shadow(
                 color: Color.black.opacity(0.85),
-                radius: 2,
+                radius: 2 * annotationSize.scale,
                 x: 0,
                 y: 1
             )
-            .accessibilityLabel( "\(observation.station.name), \(roundedTemperature) degrees Fahrenheit")
+            .accessibilityLabel(
+                "\(observation.station.name), \(accessibilityValue)"
+            )
     }
 }
