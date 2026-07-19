@@ -3,7 +3,9 @@
 import Foundation
 
 struct SavedGeneratedStation: Codable, Identifiable {
+    
     let id: String
+    let countryCode: String?
     let name: String
     let observationStationID: String
     let displayStationID: String
@@ -15,6 +17,7 @@ struct SavedGeneratedStation: Codable, Identifiable {
     
     init(result: GeneratedStationBuildResult) {
         self.id = "\(result.weatherStationID)-\(result.climateStationID)"
+        self.countryCode = result.countryCode
         self.name = result.displayName
         self.observationStationID = result.weatherStationID
         self.displayStationID = result.weatherStationID
@@ -23,6 +26,10 @@ struct SavedGeneratedStation: Codable, Identifiable {
         self.timeZoneIdentifier = result.timeZoneIdentifier
         self.acisStationID = result.climateStationID
         self.generatedClimateProfile = result.profile
+    }
+    
+    var resolvedCountryCode: String {
+        countryCode?.uppercased() ?? "US"
     }
 }
 

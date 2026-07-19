@@ -59,6 +59,20 @@ struct ClimateDate: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+extension ClimateDate: Comparable {
+    static func < (lhs: ClimateDate, rhs: ClimateDate) -> Bool {
+        if lhs.year != rhs.year {
+            return lhs.year < rhs.year
+        }
+        
+        if lhs.month != rhs.month {
+            return lhs.month < rhs.month
+        }
+        
+        return lhs.day < rhs.day
+    }
+}
+
 /// Provider-neutral interpretation of a reported value. ECCC has quality flags such as estimated or missing.
 /// The shared calculator should not need to understand what an ECCC "E" or "M" means. Instead, the ECCC
 /// adapter translates those flags: ECCC "E" -> .estimated & ECCC "M" -> .missing
@@ -111,4 +125,69 @@ struct ClimateDailyObservation: Identifiable, Codable, Equatable, Hashable, Send
     }
 }
 
+enum ClimateObservationCompletenessCalculator {
+    static func pairedCompleteness(
+        observations: [ClimateDailyObservation],
+        startDate: ClimateDate,
+        endDate: ClimateDate
+    ) -> Double? {
+        guard startDate <= endDate else {
+            return nil
+        }
 
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone =
+            TimeZone(secondsFromGMT: 0) ?? .current
+
+        let startComponents = DateComponents(
+            year: startDate.year,
+            month: startDate.month,
+            day: startDate.day
+        )
+
+        let endComponents = DateComponents(
+            year: endDate.year,
+            month: endDate.month,
+            day: endDate.day
+        )
+
+        guard let firstDate =
+                calendar.date(from: startComponents),
+              let lastDate =
+                calendar.date(from: endComponents),
+              let dayDifference =
+                calendar.dateComponents(
+                    [.day],
+                    from: firstDate,
+                    to: lastDate
+                ).day else {
+            return nil
+        }
+
+        let expectedDayCount = dayDifference + 1
+
+        guard expectedDayCount > 0 else {
+            return nil
+        }
+
+        let pairedDates = Set(
+            observations.compactMap {
+                observation -> ClimateDate? in
+
+                guard observation.localDate >= startDate,
+                      observation.localDate <= endDate,
+                      observation.minimumTemperature
+                        .usableFahrenheit != nil,
+                      observation.maximumTemperature
+                        .usableFahrenheit != nil else {
+                    return nil
+                }
+
+                return observation.localDate
+            }
+        )
+
+        return Double(pairedDates.count)
+            / Double(expectedDayCount)
+    }
+}

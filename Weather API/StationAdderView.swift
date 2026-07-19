@@ -201,7 +201,7 @@ struct StationAdderView: View {
 
         let recommendedStationID =
             searchResult.candidates.first?
-                .candidate.stationID
+                .stationID
 
         return VStack(alignment: .leading, spacing: 10) {
             Divider()
@@ -218,12 +218,12 @@ struct StationAdderView: View {
 
             ForEach(
                 displayedCandidates,
-                id: \.candidate.stationID
-            ) { evaluatedCandidate in
+                id: \.stationID
+            ) { candidate in
                 candidateSelectionRow(
-                    evaluatedCandidate,
+                    candidate,
                     isRecommended:
-                        evaluatedCandidate.candidate.stationID
+                        candidate.stationID
                         == recommendedStationID
                 )
             }
@@ -271,7 +271,7 @@ struct StationAdderView: View {
     }
     
     private func qualityColor(
-        for rating: ACISStationQualityRating
+        for rating: GeneratedClimateStationQualityRating
     ) -> Color {
         switch rating {
         case .excellent, .good:
@@ -289,23 +289,19 @@ struct StationAdderView: View {
     }
     
     private func candidateSelectionRow(
-        _ evaluatedCandidate:
-            ACISEvaluatedStationCandidate,
+        _ candidate:
+            GeneratedClimateStationCandidate,
         isRecommended: Bool
     ) -> some View {
-        let candidate = evaluatedCandidate.candidate
-
         let isSelected =
             selectedCandidateStationID
             == candidate.stationID
 
         let stationName =
-            candidate.metadata.name
-            ?? candidate.stationID
+            candidate.displayName
 
         let completeness =
-            evaluatedCandidate.quality
-                .pairedCompleteness
+            candidate.pairedCompleteness
                 .formatted(
                     .percent.precision(
                         .fractionLength(1)
@@ -356,9 +352,9 @@ struct StationAdderView: View {
                     }
 
                     HStack(spacing: 5) {
-                        if let state =
-                                candidate.metadata.state {
-                            Text(state)
+                        if let administrativeAreaCode =
+                                candidate.administrativeAreaCode {
+                            Text(administrativeAreaCode)
                             Text("•")
                         }
 
@@ -371,14 +367,14 @@ struct StationAdderView: View {
                     )
 
                     Text(
-                        "\(evaluatedCandidate.quality.rating.rawValue.capitalized)"
+                        candidate.qualityRating
+                            .rawValue.capitalized
                         + " · \(completeness) complete"
                     )
                     .font(.subheadline)
                     .foregroundStyle(
                         qualityColor(
-                            for: evaluatedCandidate
-                                .quality.rating
+                            for: candidate.qualityRating
                         )
                     )
 
@@ -526,17 +522,17 @@ struct StationAdderView: View {
                     candidateSearchResult = searchResult
                     selectedCandidateStationID =
                         searchResult.candidates.first?
-                            .candidate.stationID
+                            .stationID
                     
                     if let recommendedCandidate =
                             searchResult.candidates.first {
                         let candidateCount =
                             searchResult.candidates.count
-                        
+
                         validationMessage =
                             "Found \(candidateCount) climate matches. "
                             + "Recommended: "
-                            + recommendedCandidate.candidate.stationID
+                            + recommendedCandidate.stationID
                             + "."
                     } else {
                         validationMessage =

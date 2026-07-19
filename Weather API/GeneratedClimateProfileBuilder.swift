@@ -2,13 +2,102 @@ import Foundation
 
 ///Change the builder result
 struct GeneratedStationBuildResult {
+    let countryCode: String
+    
     let weatherStationID: String
     let climateStationID: String
     let displayName: String
     let weatherLatitude: Double
     let weatherLongitude: Double
     let timeZoneIdentifier: String
+    let pairedCompleteness: Double
     let profile: GeneratedClimateProfile
+
+    init(
+        countryCode: String = "US",
+        weatherStationID: String,
+        climateStationID: String,
+        displayName: String,
+        weatherLatitude: Double,
+        weatherLongitude: Double,
+        timeZoneIdentifier: String,
+        pairedCompleteness: Double,
+        profile: GeneratedClimateProfile
+        
+    ) {
+        self.countryCode = countryCode.uppercased()
+        self.weatherStationID = weatherStationID
+        self.climateStationID = climateStationID
+        self.displayName = displayName
+        self.weatherLatitude = weatherLatitude
+        self.weatherLongitude = weatherLongitude
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.pairedCompleteness = pairedCompleteness
+        self.profile = profile
+    }
+}
+
+enum GeneratedClimateStationQualityRating: String, Sendable {
+    
+    case excellent
+    case good
+    case acceptable
+    case marginal
+    case poor
+    
+    init(pairedCompleteness: Double) {
+        switch pairedCompleteness {
+        case 0.98...:
+            self = .excellent
+            
+        case 0.965..<0.98:
+            self = .good
+            
+        case 0.95..<0.965:
+            self = .acceptable
+            
+        case let value where value > 0.90:
+            self = .marginal
+            
+        default:
+            self = .poor
+        }
+    }
+    
+    var recommendationTier: Int {
+        switch self {
+        case .excellent, .good:
+            return 0
+            
+        case .acceptable:
+            return 1
+            
+        case .marginal:
+            return 2
+            
+        case .poor:
+            return 3
+        }
+    }
+}
+
+struct GeneratedClimateStationCandidate: Identifiable, Sendable {
+    let stationID: String
+    let displayName: String
+    let administrativeAreaCode: String?
+    let distanceMiles: Double
+    let elevationDifferenceFeet: Double?
+    let pairedCompleteness: Double
+    
+    var id: String {
+        stationID
+    }
+    
+    var qualityRating:
+    GeneratedClimateStationQualityRating {
+        
+        GeneratedClimateStationQualityRating(pairedCompleteness: pairedCompleteness)
+    }
 }
 
 struct GeneratedClimateCandidateSearchResult {
@@ -18,7 +107,7 @@ struct GeneratedClimateCandidateSearchResult {
     let weatherLongitude: Double
     let weatherElevationFeet: Double?
     let timeZoneIdentifier: String
-    let candidates: [ACISEvaluatedStationCandidate]
+    let candidates: [GeneratedClimateStationCandidate]
 }
 
 enum GeneratedClimateProfileBuilder {
@@ -72,7 +161,7 @@ enum GeneratedClimateProfileBuilder {
             "Finding nearby long-term climate stations..."
         )
 
-        let candidates =
+        let evaluatedCandidates =
             try await ACISClimateService
                 .evaluatedNearbyClimateCandidates(
                     latitude: weatherLatitude,
@@ -81,6 +170,25 @@ enum GeneratedClimateProfileBuilder {
                     radiusMiles: radiusMiles,
                     maximumCandidateCount: maximumCandidateCount
                 )
+        
+        let candidates =
+            evaluatedCandidates.map {
+                evaluatedCandidate in
+                
+                let candidate = evaluatedCandidate.candidate
+                
+                return GeneratedClimateStationCandidate(
+                    stationID: candidate.stationID,
+                    displayName:
+                        candidate.metadata.name
+                        ?? candidate.stationID,
+                    administrativeAreaCode: candidate.metadata.state,
+                    distanceMiles: candidate.distanceMiles,
+                    elevationDifferenceFeet: candidate.elevationDifferenceFeet,
+                    pairedCompleteness: evaluatedCandidate.quality
+                        .pairedCompleteness
+                )
+        }
 
         return GeneratedClimateCandidateSearchResult(
             weatherStationID: safeWeatherStationID,
@@ -148,6 +256,22 @@ enum GeneratedClimateProfileBuilder {
             ACISClimateDailyObservationAdapter
                     .observation(from: observation)
         }
+        
+        let pairedCompleteness =
+            ClimateObservationCompletenessCalculator
+                .pairedCompleteness(
+                    observations: observations,
+                    startDate: ClimateDate(
+                        year: normalStartYear,
+                        month: 1,
+                        day: 1
+                    ),
+                    endDate: ClimateDate(
+                        year: normalEndYear,
+                        month: 12,
+                        day: 31
+                    )
+                ) ?? 0
 
         await progress?("Building 1991-2020 normals...")
         guard let profile = GeneratedClimateNormalCalculator.generatedProfile(
@@ -169,6 +293,7 @@ enum GeneratedClimateProfileBuilder {
             weatherLatitude: weatherLatitude,
             weatherLongitude: weatherLongitude,
             timeZoneIdentifier: timeZoneIdentifier,
+            pairedCompleteness: pairedCompleteness,
             profile: profile
         )
     }

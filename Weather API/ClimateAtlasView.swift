@@ -319,9 +319,6 @@ struct ClimateAtlasView: View {
                             AtlasStationCardView(
                                 observation: observation
                             ) {
-                                guard observation.station.source.countryCode == "US" else {
-                                    return
-                                }
                                 
                                 selectedObservationID = nil
                                 onBuildClimateProfile(observation)

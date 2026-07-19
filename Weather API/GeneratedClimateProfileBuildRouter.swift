@@ -19,7 +19,8 @@ enum GeneratedClimateProfileBuildRouterError:
         case .unsupportedCountry(let countryCode):
             if countryCode == "CA" {
                 return """
-                    Canadian climate profile building is not avail yet.
+                    Canadian nearby climate-station searching \
+                    is not available yet.
                     """
             }
             
@@ -54,8 +55,14 @@ enum GeneratedClimateProfileBuildRouter {
                     )
             
         case "CA":
-            throw GeneratedClimateProfileBuildRouterError
-                .unsupportedCountry(source.countryCode)
+            return try await
+                ECCCGeneratedClimateProfileBuilder
+                    .findClimateCandidates(
+                        aviationStationID: source.stationID,
+                        radiusMiles: radiusMiles,
+                        maximumCandidateCount: maximumCandidateCount,
+                        progress: progress
+                    )
             
         default:
             throw GeneratedClimateProfileBuildRouterError
@@ -83,8 +90,16 @@ enum GeneratedClimateProfileBuildRouter {
                 )
             
         case "CA":
-            throw GeneratedClimateProfileBuildRouterError
-                .unsupportedCountry("CA")
+            return try await
+                ECCCGeneratedClimateProfileBuilder
+                    .buildProfile(
+                        aviationStationID:
+                            source.stationID,
+                        climateStationID:
+                            climateStationID,
+                        progress:
+                            progress
+                    )
             
         default:
             throw GeneratedClimateProfileBuildRouterError

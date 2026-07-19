@@ -47,8 +47,15 @@ struct AtlasStationCardView: View {
     }
     
     /// Make the Canadian card safe.
-    private var isUnitedStatesStation: Bool {
-        observation.station.source.countryCode == "US"
+    private var canBuildClimateProfile: Bool {
+        switch observation.station.source.countryCode
+            .uppercased() {
+        case "US", "CA":
+            return true
+            
+        default:
+            return false
+        }
     }
     
     private var stationID: String {
@@ -450,7 +457,7 @@ struct AtlasStationCardView: View {
                 action: onBuildClimateProfile
             ) {
                 Text(
-                    isUnitedStatesStation
+                    canBuildClimateProfile
                         ? "Build Climate Profile"
                         : "Climate Profile Coming Soon"
                 )
@@ -460,7 +467,7 @@ struct AtlasStationCardView: View {
             .buttonStyle(.borderedProminent)
             .tint(.blue)
             .controlSize(.large)
-            .disabled(!isUnitedStatesStation)
+            .disabled(!canBuildClimateProfile)
             .padding(.top, 4)
         }
         .padding(18 * cardScale)

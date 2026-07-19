@@ -302,51 +302,22 @@ struct ACISStationInfo: Decodable {
             return nil
         }
         
-        let degreesToRadians = Double.pi / 180.0
+        let sourceCoordinate =
+            GeographicCoordinate(
+                latitude: sourceLatitude,
+                longitude: sourceLongitude
+            )
         
-        ///source latitude is the user-enterable station that might not be a long-term climate station
-        ///in itself, e.g. PAEG for Eagle AK.
-        let sourceLatitudeRadians =
-            sourceLatitude * degreesToRadians
+        let stationCoordinate =
+            GeographicCoordinate(
+                latitude: stationLatitude,
+                longitude: stationLongitude
+            )
         
-        let stationLatitudeRadians =
-            stationLatitude * degreesToRadians
-        
-        let latitudeDifference =
-            (stationLatitude - sourceLatitude) * degreesToRadians
-        
-        let longitudeDifference =
-            (stationLongitude - sourceLongitude) * degreesToRadians
-        
-        let latitudeTerm =
-            sin(latitudeDifference / 2.0)
-            * sin(latitudeDifference / 2.0)
-        
-        let longitudeTerm =
-            sin(longitudeDifference / 2.0)
-            * sin(longitudeDifference / 2.0)
-        
-        /// uses haversine formula. can be derived from metric tensor.
-        let haversineValue =
-            latitudeTerm
-            + cos(sourceLatitudeRadians)
-            * cos(stationLatitudeRadians)
-            * longitudeTerm
-        
-        /// protects against floating-point noise, preventing sqrt of a negative number.
-        let clampedValue = min(
-            max(haversineValue, 0.0),
-            1.0
+        return GeodesicDistance.miles(
+            from: sourceCoordinate,
+            to: stationCoordinate
         )
-        
-        let angularDistance = 2.0 * atan2(
-            sqrt(clampedValue),
-            sqrt(1.0 - clampedValue)
-        )
-        
-        let earthRadiusMiles = 3_958.8
-        
-        return earthRadiusMiles * angularDistance
     }
     
     var ghcnStationID: String? {
