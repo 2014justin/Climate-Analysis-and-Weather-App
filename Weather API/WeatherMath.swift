@@ -78,6 +78,61 @@ enum WeatherMath {
         return sqrt(sqDev / Double(values.count - 1))
     }
     
+    /// Calculates percentile for threshold seasons.
+    /// Returns a linearly-interpolated percentile, clamped to 0...100.
+    /// Non-finite values are ignored
+    static func percentile(
+        of values: [Double],
+        percentile: Double
+    ) -> Double? {
+        
+        guard percentile.isFinite else {
+            return nil
+        }
+        
+        let sortedValues =
+            values
+                .filter(\.isFinite)
+                .sorted()
+        
+        guard sortedValues.isEmpty == false else{
+            return nil
+        }
+        
+        let clampedPercentile =
+            min(
+                max(percentile, 0.0),
+                100.00
+            )
+        
+        let rank =
+            (clampedPercentile / 100.0)
+            * Double(sortedValues.count - 1)
+        
+        let lowerIndex =
+            Int(floor(rank))
+        
+        let upperIndex =
+            Int(ceil(rank))
+        
+        if lowerIndex == upperIndex {
+            return sortedValues[lowerIndex]
+        }
+        
+        let lowerValue =
+            sortedValues[lowerIndex]
+        
+        let upperValue =
+            sortedValues[upperIndex]
+        
+        let interpolationFraction =
+            rank - Double(lowerIndex)
+        
+        return
+            lowerValue + (upperValue - lowerValue)
+            * interpolationFraction
+    }
+    
     static func lowerChartBound(for value: Double) -> Double {
         let roundedDown = floor(value / 5.0) * 5.0
         
@@ -86,6 +141,7 @@ enum WeatherMath {
         }
         return roundedDown
     }
+    
     ///base 5 logic for y-axis scaling
     
     static func upperChartBound(for value: Double) -> Double {
