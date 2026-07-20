@@ -139,7 +139,7 @@ enum ECCCClimateStationThreadBuilder {
             }
     }
     
-    private static func groupingKey(
+    nonisolated private static func groupingKey(
         for station: ECCCClimateStation
     ) -> String {
         if let transportCanadaIdentifier =

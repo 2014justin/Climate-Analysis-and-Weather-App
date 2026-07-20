@@ -228,7 +228,7 @@ enum ECCCClimateStationCatalogServiceError:
 struct ECCCClimateStationCatalogService {
     private let session: URLSession
     
-    init(session: URLSession = .shared) {
+    nonisolated init(session: URLSession = .shared) {
         self.session = session
     }
     

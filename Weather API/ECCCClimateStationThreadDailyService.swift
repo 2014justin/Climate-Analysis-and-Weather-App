@@ -18,7 +18,7 @@ struct ECCCClimateStationThreadDailyService {
     private let dailyService:
         ECCCClimateDailyService
     
-    init(
+    nonisolated init(
         dailyService:
             ECCCClimateDailyService = ECCCClimateDailyService()
     ) {

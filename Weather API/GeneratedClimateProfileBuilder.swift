@@ -129,7 +129,7 @@ enum GeneratedClimateProfileBuilder {
             throw URLError(.badURL)
         }
 
-        await progress?("Fetching weather station metadata...")
+        progress?("Fetching weather station metadata...")
 
         let stationMetadata =
             try await weatherService.fetchStationMetadata(
@@ -157,7 +157,7 @@ enum GeneratedClimateProfileBuilder {
         let weatherElevationFeet =
             stationMetadata.properties.elevationFeet
 
-        await progress?(
+        progress?(
             "Finding nearby long-term climate stations..."
         )
 
@@ -219,7 +219,7 @@ enum GeneratedClimateProfileBuilder {
             ? safeClimateStationID!
             : safeWeatherStationID
 
-        await progress?("Fetching weather station metadata...")
+        progress?("Fetching weather station metadata...")
         let stationMetadata = try await weatherService.fetchStationMetadata(
             stationID: safeWeatherStationID
         )
@@ -233,7 +233,7 @@ enum GeneratedClimateProfileBuilder {
         let displayName = stationMetadata.properties.name ?? safeWeatherStationID
         let timeZoneIdentifier = stationMetadata.properties.timeZone ?? "UTC"
 
-        await progress?("Fetching climate station metadata...")
+        progress?("Fetching climate station metadata...")
         let climateMetadata = try await ACISClimateService.fetchStationInfo(
             stationID: finalClimateStationID
         )
@@ -242,7 +242,7 @@ enum GeneratedClimateProfileBuilder {
         let climateLongitude = climateMetadata?.longitude ?? weatherLongitude
         let climateDisplayName = climateMetadata?.name ?? displayName
 
-        await progress?("Fetching 1991-2020 ACIS daily observations...")
+        progress?("Fetching 1991-2020 ACIS daily observations...")
         
         let acisObservations =
         try await ACISClimateService.fetchDailyObservations(
@@ -273,7 +273,7 @@ enum GeneratedClimateProfileBuilder {
                     )
                 ) ?? 0
 
-        await progress?("Building 1991-2020 normals...")
+        progress?("Building 1991-2020 normals...")
         guard let profile = GeneratedClimateNormalCalculator.generatedProfile(
             stationID: finalClimateStationID,
             displayName: climateDisplayName,

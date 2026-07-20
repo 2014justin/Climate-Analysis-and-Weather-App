@@ -14,20 +14,22 @@ enum GeneratedClimateProfileBuildRouterError:
     
     case unsupportedCountry(String)
     
+    case missingClimateStationSelection
+    
     var errorDescription: String? {
         switch self {
         case .unsupportedCountry(let countryCode):
-            if countryCode == "CA" {
-                return """
-                    Canadian nearby climate-station searching \
-                    is not available yet.
-                    """
-            }
-            
             return """
                 Climate profile building is not available for \
                 \(countryCode) stations.
                 """
+            
+        case .missingClimateStationSelection:
+            return """
+                Select a Canadian climate station before \
+                building its climate profile.
+                """
+            
         }
     }
 }
@@ -57,7 +59,7 @@ enum GeneratedClimateProfileBuildRouter {
         case "CA":
             return try await
                 ECCCGeneratedClimateProfileBuilder
-                    .findClimateCandidates(
+                    .findOfficialClimateCandidates(
                         aviationStationID: source.stationID,
                         radiusMiles: radiusMiles,
                         maximumCandidateCount: maximumCandidateCount,
@@ -90,15 +92,20 @@ enum GeneratedClimateProfileBuildRouter {
                 )
             
         case "CA":
+            guard let climateStationID,
+                  climateStationID
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty == false else {
+                throw GeneratedClimateProfileBuildRouterError
+                    .missingClimateStationSelection
+            }
+            
             return try await
                 ECCCGeneratedClimateProfileBuilder
-                    .buildProfile(
-                        aviationStationID:
-                            source.stationID,
-                        climateStationID:
-                            climateStationID,
-                        progress:
-                            progress
+                    .buildOfficialProfile(
+                        aviationStationID: source.stationID,
+                        climateStationID: climateStationID,
+                        progress: progress
                     )
             
         default:

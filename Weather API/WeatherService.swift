@@ -1,6 +1,8 @@
 import Foundation
 
 struct WeatherService {
+    nonisolated init() {}
+
     private func observationsURL(stationID: String, hours: Int) throws -> URL {
         let endDate = Date()
         let startDate = endDate.addingTimeInterval(

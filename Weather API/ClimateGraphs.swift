@@ -272,34 +272,49 @@ struct ChartHoverOverlay: View {
     
     var body: some View {
         GeometryReader { geometry in
-            let plotFrame = geometry[proxy.plotAreaFrame]
-            
-            Rectangle()
-                .fill(.clear)
-                .frame(width: plotFrame.width, height: plotFrame.height)
-                .position(x: plotFrame.midX, y: plotFrame.midY)
-                .contentShape(Rectangle())
-                .onContinuousHover { phase in
-                    switch phase {
-                    case .active(let location):
-                        let xPosition = location.x - plotFrame.origin.x
-                        let yPosition = location.y - plotFrame.origin.y
-                        
-                        guard xPosition >= 0,
-                              xPosition <= plotFrame.width,
-                              yPosition >= 0,
-                              yPosition <= plotFrame.height else {
+            if let plotFrameAnchor = proxy.plotFrame {
+                let plotFrame = geometry[plotFrameAnchor]
+
+                Rectangle()
+                    .fill(.clear)
+                    .frame(
+                        width: plotFrame.width,
+                        height: plotFrame.height
+                    )
+                    .position(
+                        x: plotFrame.midX,
+                        y: plotFrame.midY
+                    )
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            let xPosition =
+                                location.x - plotFrame.origin.x
+
+                            let yPosition =
+                                location.y - plotFrame.origin.y
+
+                            guard xPosition >= 0,
+                                  xPosition <= plotFrame.width,
+                                  yPosition >= 0,
+                                  yPosition <= plotFrame.height else {
+                                onEnded()
+                                return
+                            }
+
+                            onHover(
+                                CGPoint(
+                                    x: xPosition,
+                                    y: yPosition
+                                )
+                            )
+
+                        case .ended:
                             onEnded()
-                            return
                         }
-                        
-                        onHover(CGPoint(x: xPosition, y: yPosition))
-                        
-                    case .ended:
-                        onEnded()
                     }
-                }
-            
+            }
         }
     }
 }

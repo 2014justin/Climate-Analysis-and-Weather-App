@@ -26,7 +26,7 @@ enum ECCCClimateDailyServiceError: LocalizedError {
 struct ECCCClimateDailyService {
     private let session: URLSession
     
-    init(session: URLSession = .shared) {
+    nonisolated init(session: URLSession = .shared) {
         self.session = session
     }
     

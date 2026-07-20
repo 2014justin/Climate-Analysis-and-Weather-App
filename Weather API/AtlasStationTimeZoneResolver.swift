@@ -1,9 +1,11 @@
 import Foundation
 import CoreLocation
+import MapKit
 
 /// This keeps the existing authoritative NWS behavior for America and uses Apple's coordinate lookup for
 /// Canada. Supplying coordinates does not require requesting the user's physical location.
 struct AtlasStationTimeZoneResolver {
+    nonisolated init() {}
     
     func timeZone(
         for station: AtlasStation
@@ -47,9 +49,14 @@ struct AtlasStationTimeZoneResolver {
             longitude: station.longitude
         )
         
-        let placemarks = try await CLGeocoder()
-            .reverseGeocodeLocation(location)
-        
-        return placemarks.first?.timeZone
+        guard let request = MKReverseGeocodingRequest(
+            location: location
+        ) else {
+            return nil
+        }
+
+        let mapItems = try await request.mapItems
+
+        return mapItems.first?.timeZone
     }
 }

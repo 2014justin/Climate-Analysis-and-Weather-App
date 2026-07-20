@@ -195,9 +195,7 @@ struct StationAdderView: View {
     private func candidateSelectionSection(
         _ searchResult: GeneratedClimateCandidateSearchResult
     ) -> some View {
-        let displayedCandidates = Array(
-            searchResult.candidates.prefix(3)
-        )
+        
 
         let recommendedStationID =
             searchResult.candidates.first?
@@ -217,7 +215,7 @@ struct StationAdderView: View {
             .foregroundStyle(DashboardTheme.textSecondary)
 
             ForEach(
-                displayedCandidates,
+                searchResult.candidates,
                 id: \.stationID
             ) { candidate in
                 candidateSelectionRow(
@@ -228,14 +226,6 @@ struct StationAdderView: View {
                 )
             }
 
-            if searchResult.candidates.count > 3 {
-                Text(
-                    "\(searchResult.candidates.count - 3) "
-                    + "additional candidate evaluated."
-                )
-                .font(.caption)
-                .foregroundStyle(DashboardTheme.textSecondary)
-            }
             
             Button {
                 Task {
@@ -434,7 +424,7 @@ struct StationAdderView: View {
     
     @MainActor
     private func addSelectedCandidate() async {
-        guard let searchResult = candidateSearchResult,
+        guard candidateSearchResult != nil,
               let selectedCandidateStationID,
                 let validatedStationSource
         else {

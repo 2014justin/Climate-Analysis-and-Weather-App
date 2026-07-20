@@ -16,6 +16,11 @@
 			path = "Weather API";
 			sourceTree = "<group>";
 		};
+		C0741CDC300D5A1C0083F40A /* Tools */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Tools;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -30,6 +35,7 @@
 		000000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				C0741CDC300D5A1C0083F40A /* Tools */,
 				000000000000000000000010 /* Weather API */,
 				000000000000000000000020 /* Products */,
 			);
@@ -58,6 +64,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				000000000000000000000010 /* Weather API */,
+				C0741CDC300D5A1C0083F40A /* Tools */,
 			);
 			name = "Weather API";
 			productName = MyApp;
