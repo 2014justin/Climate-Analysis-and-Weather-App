@@ -1249,42 +1249,65 @@ struct ContentView: View {
     
     /// Calculate our standard deviation for thermal pace. Takes the climate normal and shows the standard deviation
     /// of temperature for max/min for a given date.
-    private func thermalPaceStandardDeviation(month: Int, day: Int) -> Double? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    private func thermalPaceStandardDeviation(
+        month: Int,
+        day: Int,
+        dayOfYear: Int
+    ) -> Double? {
         
-        let values = thresholdNormalPeriodObservations.compactMap { observation -> Double? in
-            guard calendar.component(.month, from: observation.date) == month,
-                  calendar.component(.day, from: observation.date) == day else {
-                return nil
-            }
-            
+        /// Provider-Agnostic spreads stored in a generated US or Canadian profile.
+        if let storedSpread =
+                selectedLocation
+                    .generatedClimateProfile?
+                    .dailyTemperatureSpreads?
+                    .first(
+                        where: {
+                            $0.dayOfYear == dayOfYear
+                        }
+                    ) {
             switch selectedThermalPaceVariable {
             case .minimum:
-                return observation.minimumTemperature
+                return storedSpread.minimumStandardDeviation
+                
             case .maximum:
-                return observation.maximumTemperature
+                return storedSpread.maximumStandardDeviation
             }
         }
         
-        guard values.count >= 10 else {
-            return nil
-        }
+        /// Backward-compatible ACIS fallback for built-in location and older
+        /// saved US profiles.
         
-        /// Calculates the arithmetic mean.
-        let mean = values.reduce(0, +) / Double(values.count)
+        var calendar = Calendar(identifier: .gregorian)
         
-        ///For each value, subtract it from the mean, then square it and add them all up at the end
-        let squaredDeviations = values.reduce(0.0) { total, value in
-            total + pow(value - mean, 2)
-        }
+        calendar.timeZone =
+            TimeZone(secondsFromGMT: 0)
+            ?? .current
         
-        /// Sample standard deviation because the available normal-period observations estimate
-        /// the broadder climatic distribution. Requiring ten observations prevents a visually authoritative
-        /// band from being generated from a tiny sample.
-        return sqrt(
-            squaredDeviations / Double(values.count - 1)
-        )
+        let values =
+            thresholdNormalPeriodObservations
+                .compactMap {
+                    observation -> Double? in
+                    
+                    guard calendar.component(
+                        .month,
+                        from: observation.date
+                    ) == month,
+                    calendar.component(
+                        .day,
+                        from: observation.date
+                    ) == day else {
+                        return nil
+                    }
+                    
+                    switch selectedThermalPaceVariable {
+                    case .minimum:
+                        return observation.minimumTemperature
+                        
+                    case .maximum:
+                        return observation.maximumTemperature
+                    }
+                }
+        return WeatherMath.sampleStandardDeviation(values)
     }
     
     /// Generate the 29 fitted-normal points
@@ -1332,10 +1355,12 @@ struct ContentView: View {
             }
             
             let temperature: Double
-            let standardDeviation = thermalPaceStandardDeviation(
-                month: month,
-                day: day
-            )
+            let standardDeviation =
+                thermalPaceStandardDeviation(
+                    month: month,
+                    day: day,
+                    dayOfYear: climateDay
+                )
             
             switch selectedThermalPaceVariable {
             case .minimum:
@@ -1516,6 +1541,16 @@ struct ContentView: View {
             .chartLegend(.hidden)
             .chartXScale(domain: 0.0...1.0)
             .chartYScale(domain: seasonalPhaseYDomain)
+            .chartXAxisLabel(
+                "Normalized Solar, s(t)",
+                position: .bottom,
+                alignment: .center
+            )
+            .chartYAxisLabel(
+                "Tmin (°F)",
+                position: .leading,
+                alignment: .center
+            )
             .chartXAxis {
                 AxisMarks(values: [0.0, 0.5, 1.0]) { _ in
                     AxisGridLine()

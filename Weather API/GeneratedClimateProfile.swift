@@ -65,6 +65,11 @@ struct GeneratedClimateProfile: Identifiable, Codable, Equatable, Hashable {
     let highRMSE: Double
     let lowRMSE: Double
     
+    /// Provider-agnostic daily Tmin and Tmax variability.
+    /// Optional so previously saved profiles continue decoding.
+    let dailyTemperatureSpreads:
+        [ClimateDailyTemperatureSpread]?
+    
     ///Normal High
     func normalHigh(dayOfYear t: Int) -> Double {
         normalHighSeries.value(dayOfYear: t)
@@ -455,6 +460,14 @@ enum GeneratedClimateNormalCalculator {
             return nil
         }
         
+        let dailyTemperatureSpreads =
+            ClimateTemperatureSpreadCalculator
+                .dailySpreads(
+                    from: observations
+                )
+        
+            
+        
         ///Takes the 365 raw daily normals and Gaussian-smooths them.
         ///Makes the dates more smooth and climate-like
         let smoothNormals = smoothedDailyNormals(
@@ -521,7 +534,12 @@ enum GeneratedClimateNormalCalculator {
             usableObservationCount: observations.count,
             fitOrder: fitOrder,
             highRMSE: highFit.rmse,
-            lowRMSE: lowFit.rmse
+            lowRMSE: lowFit.rmse,
+            
+            /// Automatically computes and stores the same 365 spread records for both ACIS
+            /// and ECCC because both builders already pass [ClimateDailyObservation]
+            dailyTemperatureSpreads:
+                dailyTemperatureSpreads
         )
     }
     

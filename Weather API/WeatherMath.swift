@@ -63,6 +63,21 @@ enum WeatherMath {
         return pascals * 0.00029529983071445
     }
     
+    /// Calculate standard deviation
+    static func sampleStandardDeviation(_ values: [Double]) -> Double? {
+        
+        guard values.count >= 10 else {
+            return nil
+        }
+        
+        let mean = values.reduce(0,+) / Double(values.count)
+        let sqDev = values.reduce(0.0) { total, value in
+            total + pow(value - mean, 2)
+        }
+        
+        return sqrt(sqDev / Double(values.count - 1))
+    }
+    
     static func lowerChartBound(for value: Double) -> Double {
         let roundedDown = floor(value / 5.0) * 5.0
         

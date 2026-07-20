@@ -93,6 +93,10 @@ struct ClimateGraphView: View {
         }
         self.climatePoints = climatePoints
         self.annualTemperatureSpreadPoints = Self.makeAnnualTemperatureSpreadPoints(
+            storedSpreads:
+                location
+                    .generatedClimateProfile?
+                    .dailyTemperatureSpreads,
             normalPeriodObservations: normalPeriodObservations,
             climatePoints: climatePoints
         )
@@ -804,27 +808,53 @@ struct ClimateGraphView: View {
         return nil
     }
     
-    ///Reusable sample standard deviation function
-    private static func sampleStandardDeviation(_ values: [Double]) -> Double? {
-        ///We require at least 10 values
-        guard values.count >= 10 else {
-            return nil
-        }
-        
-        /// Calculate the mean, then do the sum of squared residuals, divide by N - 1 because it is a sample.
-        let mean = values.reduce(0,+) / Double(values.count)
-        let squaredDeviations = values.reduce(0.0) { total, value in
-            total + pow(value - mean, 2)
-        }
-        
-        return sqrt(squaredDeviations / Double(values.count - 1))
-    }
     
     ///Annual spread dataset:
     private static func makeAnnualTemperatureSpreadPoints(
-        normalPeriodObservations: [ACISDailyObservation],
-        climatePoints: [ClimateDayPoint]
+        storedSpreads:
+            [ClimateDailyTemperatureSpread]?,
+        normalPeriodObservations:
+            [ACISDailyObservation],
+        climatePoints:
+            [ClimateDayPoint]
     ) -> [AnnualTemperatureSpreadPoint] {
+        
+        /// Stores day of year then the std deviation as the second part.
+        var storedSpreadsByDay:
+            [Int: ClimateDailyTemperatureSpread] = [:]
+        
+        if let storedSpreads {
+            for spread in storedSpreads
+            where (1...365).contains(
+                spread.dayOfYear
+            ) {
+                storedSpreadsByDay[
+                    spread.dayOfYear
+                ] = spread
+            }
+        }
+        
+        if storedSpreadsByDay.count == 365 {
+            return climatePoints.map { point in
+                let storedSpread =
+                    storedSpreadsByDay[
+                        point.dayOfYear
+                    ]
+                
+                return AnnualTemperatureSpreadPoint(
+                    dayOfYear: point.dayOfYear,
+                    normalLow: point.normalLow,
+                    normalHigh: point.normalHigh,
+                    lowStandardDeviation:
+                        storedSpread?
+                            .minimumStandardDeviation,
+                    highStandardDeviation:
+                        storedSpread?
+                            .maximumStandardDeviation
+                )
+            }
+        }
+        
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         
@@ -856,8 +886,8 @@ struct ClimateGraphView: View {
                 dayOfYear: point.dayOfYear,
                 normalLow: point.normalLow,
                 normalHigh: point.normalHigh,
-                lowStandardDeviation: Self.sampleStandardDeviation(minimums),
-                highStandardDeviation: Self.sampleStandardDeviation(maximums)
+                lowStandardDeviation: WeatherMath.sampleStandardDeviation(minimums),
+                highStandardDeviation: WeatherMath.sampleStandardDeviation(maximums)
             )
         }
     }
