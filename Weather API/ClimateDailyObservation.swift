@@ -111,10 +111,8 @@ struct ClimateTemperatureReading: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-/// Provider-neutral dialy temperatures consumed by the shared
-/// climate-normal and Fourier-fitting pipeline. It intentionally only contains the information
-/// required to generate a temperature climate profile. ACIS precip, snowfall, Weather Year, and threshold-season features
-/// continue using ACISDailyObservation for now.
+/// Provider-agnostic daily temperatures consumed by shared climate calculations.
+/// Provider-specific precipitation, snowfall, and Weather Year features are modeled separately.
 struct ClimateDailyObservation: Identifiable, Codable, Equatable, Hashable, Sendable {
     let localDate: ClimateDate
     let minimumTemperature: ClimateTemperatureReading

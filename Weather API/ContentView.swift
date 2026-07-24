@@ -2244,59 +2244,7 @@ struct ContentView: View {
                 ACISClimateDailyObservationAdapter
                     .observations(from: observations)
             
-            #if DEBUG
             
-            let parityCases: [
-                (
-                    label: String,
-                    mode: ThresholdEventMode,
-                    threshold: Double
-                )
-            ] = [
-                (
-                    label: "32°F cold nights",
-                    mode: .coldNights,
-                    threshold: 32.0
-                ),
-                (
-                    label: "80°F warm afternoon",
-                    mode: .warmAfternoon,
-                    threshold: 80.0
-                ),
-                (
-                    label: "50°F afternoon lock-in",
-                    mode: .warmAfternoonLockIn,
-                    threshold: 50.0
-                ),
-                (
-                    label: "50°F mild nights",
-                    mode: .mildNights,
-                    threshold: 50.0
-                )
-            ]
-            
-            for parityCase in parityCases {
-                
-                let report =
-                    ClimateThresholdParityChecker
-                        .compare(
-                            label: "\(requestedLocation.name) - " + parityCase.label,
-                            observations: observations,
-                            startYear: GeneratedClimateProfileBuilder.normalStartYear,
-                            endYear: GeneratedClimateProfileBuilder.normalEndYear,
-                            threshold: parityCase.threshold,
-                            field: parityCase.mode.field,
-                            comparison: parityCase.mode.comparison,
-                            springEventChoice: parityCase.mode.springEventChoice,
-                            fallEventChoice: parityCase.mode.fallEventChoice
-                        )
-                
-                print(
-                    report.formattedText
-                )
-            }
-            
-            #endif
             
             let pairedTemperatureCount =
                 climateObservations.filter { observation in
