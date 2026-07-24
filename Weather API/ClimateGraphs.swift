@@ -56,6 +56,24 @@ enum ThresholdEventMode: String, CaseIterable, Identifiable {
         rawValue
     }
     
+    /// Connects this UI mode to its provider-agnostic scientific destination family.
+    var family: ClimateThresholdFamily {
+        switch self {
+            
+        case .coldNights:
+            return .coldNights
+            
+        case .warmAfternoon:
+            return .warmAfternoon
+            
+        case .warmAfternoonLockIn:
+            return .warmAfternoonLockIn
+            
+        case .mildNights:
+            return .mildNights
+        }
+    }
+    
     var title: String {
         switch self {
         case .coldNights:
@@ -72,84 +90,65 @@ enum ThresholdEventMode: String, CaseIterable, Identifiable {
     var technicalLabel: String {
         switch self {
         case .coldNights:
-            return "Tmin <= threshold"
+            return "Tmin ≤ threshold"
         case .warmAfternoon:
-            return "Tmax >= threshold"
+            return "Tmax ≥ threshold"
         case .warmAfternoonLockIn:
             return "Tmax < threshold"
         case .mildNights:
-            return "Tmin >= threshold"
+            return "Tmin ≥ threshold"
         }
     }
     
+    /// A curated subset for visible UI buttons. The complete threshold catalog remains
+    /// available for saved profiles and future advanced controls.
     var thresholdPresets: [Double] {
-        switch self {
-            ///answers last spring freeze/first fall freeze
-        case .coldNights:
-            return [20, 28, 32, 36, 40, 45]
-        case .warmAfternoon: ///first spring occurance of a 50 degree temperature
-            return [50, 60, 65, 70, 80, 90, 95, 100, 105, 110]
-        case .warmAfternoonLockIn: ///after this point, afternoons are expect to reach at least this temp
-            return [40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100]
-        case .mildNights: ///first night in spring that makes it above freezing. NOT the last freeze.
-            return [32, 36, 40, 45, 50, 55, 60]
-        }
-    }
-    
-    var field: ACISTemperatureField {
-        switch self {
-        /// Cold nights & mild nights -> T min
-        case .coldNights, .mildNights:
-            return .minimum
-        /// Hot afternoons -> T max
-        case .warmAfternoon, .warmAfternoonLockIn:
-            return .maximum
-        }
-    }
-    
-    var comparison: ACISThresholdComparison {
-        switch self {
-            
-        /// T min < = threshold (like 32)
-        case .coldNights:
-            return .lessThanOrEqual
-            
-        /// T max > = threshold (like 80). Usually first occurance of.
-        /// mildNights can tell you the first time in spring that a morning low remains
-        /// above the freezing mark, for example.
-        case .warmAfternoon, .mildNights:
-            return .greaterThanOrEqual
+        let preferredPresets: [Double]
         
-        /// T max >= threshold
+        switch self {
+            
+        case .coldNights:
+            preferredPresets =
+                [28, 32, 36, 40]
+            
+        case .warmAfternoon:
+            preferredPresets = [
+                60, 70, 80, 90,
+            ]
+            
         case .warmAfternoonLockIn:
-            return .lessThan
+            preferredPresets = [
+                40, 50, 60, 70
+            ]
+            
+        case .mildNights:
+            preferredPresets = [
+                32, 40, 50, 60
+            ]
+        }
+        
+        let availableThresholds =
+            Set(family.thresholdPresets)
+        
+        return preferredPresets.filter {
+            availableThresholds.contains($0)
         }
     }
-
-    var springEventChoice: ACISSeasonEventChoice {
-        switch self {
-        case .coldNights:
-            return .last
-        case .warmAfternoon:
-            return .first
-        case .warmAfternoonLockIn:
-            return .last
-        case .mildNights:
-            return .first
-        }
+    
+    var field: ClimateTemperatureField {
+        family.field
     }
-
-    var fallEventChoice: ACISSeasonEventChoice {
-        switch self {
-        case .coldNights:
-            return .first
-        case .warmAfternoon:
-            return .last
-        case .warmAfternoonLockIn:
-            return .first
-        case .mildNights:
-            return .last
-        }
+    
+    var comparison: ClimateThresholdComparison {
+        family.comparison
+    }
+    
+    var springEventChoice: ClimateThresholdEventChoice {
+        family.springEventChoice
+    }
+    
+    var fallEventChoice: ClimateThresholdEventChoice {
+        family.fallEventChoice
     }
     
     ///explains the thresholds

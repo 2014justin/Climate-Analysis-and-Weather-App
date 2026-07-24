@@ -70,6 +70,14 @@ struct GeneratedClimateProfile: Identifiable, Codable, Equatable, Hashable {
     let dailyTemperatureSpreads:
         [ClimateDailyTemperatureSpread]?
     
+    /// Provider-neutral threshold climatology derived  from
+    /// the profile's source-period daily observations.
+    ///
+    /// Optional so previously saved profiles continue decoding.
+    let thresholdSummaries:
+        [ClimateThresholdSummary]?
+    
+    
     ///Normal High
     func normalHigh(dayOfYear t: Int) -> Double {
         normalHighSeries.value(dayOfYear: t)
@@ -117,39 +125,7 @@ enum GeneratedClimateNormalCalculator {
     
     ///Since GeneratedClimateNormalCalculator is an enum utility namespace, we are never making objects from it.
     ///so its helper properties/functions should be static.
-    ///
-    ///Start by creating one shared Gregorian calendar
-    private static let calendar: Calendar = {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-        return calendar
-    }()
     
-    ///multiple years from the same calendar day are being used, like 2020-07-15, 1998-07-15 and 2014-07-15
-    ///Maps any real date onto a standard 365-day year. Jan 1, 1991 -> Day 1 . Jan 1, 2007 -> day 1
-    private static func referenceDayOfYear(
-        from date: ClimateDate
-    ) -> Int? {
-        if date.month == 2 && date.day == 29 {
-            return nil
-        }
-        
-        guard let referenceDate = calendar.date(
-            from: DateComponents(
-                year: 2001,
-                month: date.month,
-                day: date.day
-            )
-        ) else {
-            return nil
-        }
-        
-        return calendar.ordinality(
-            of: .day,
-            in: .year,
-            for: referenceDate
-        )
-    }
     
     ///Daily Normals
     ///Other code will eventually call this function, so do NOT private it
@@ -168,7 +144,7 @@ enum GeneratedClimateNormalCalculator {
         for observation in observations {
             
             ///If this obs cannot be mapped onto a normal 365-day year, skip. This catches Feb 29 leap year.
-            guard let dayOfYear = referenceDayOfYear(from: observation.localDate) else {
+            guard let dayOfYear = ClimateCalendar.climatologicalDayOfYear(for: observation.localDate) else {
                 continue
             }
             
@@ -466,6 +442,14 @@ enum GeneratedClimateNormalCalculator {
                     from: observations
                 )
         
+        let thresholdSummaries =
+            ClimateThresholdCalculator
+                .standardThresholdSummaries(
+                    from: observations,
+                    startYear: sourceStartYear,
+                    endYear: sourceEndYear
+                )
+        
             
         
         ///Takes the 365 raw daily normals and Gaussian-smooths them.
@@ -539,7 +523,9 @@ enum GeneratedClimateNormalCalculator {
             /// Automatically computes and stores the same 365 spread records for both ACIS
             /// and ECCC because both builders already pass [ClimateDailyObservation]
             dailyTemperatureSpreads:
-                dailyTemperatureSpreads
+                dailyTemperatureSpreads,
+            thresholdSummaries:
+                thresholdSummaries
         )
     }
     

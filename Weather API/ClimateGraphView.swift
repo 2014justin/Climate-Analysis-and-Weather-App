@@ -36,14 +36,16 @@ struct ClimateGraphView: View {
     
     @State private var keyMonitor: Any?
     @State private var selectedClimatePoint: ClimateDayPoint?
-    ///holds the calculated ACIS result
-    @State private var thresholdSummaries: [ACISThresholdSummary] = []
+    ///holds the provider-agnostic threshold results.
+    @State private var thresholdSummaries:
+        [ClimateThresholdSummary] = []
     ///lets us show loading state or disable buttons
     @State private var isLoadingThresholdSummary = false
     ///human readable status or error message.
-    @State private var thresholdSummaryStatus = "Not loaded yet"
+    @State private var thresholdSummaryErrorMessage: String?
     /// loader function for climate data
     @State private var selectedThresholds: Set<Double> = [32.0]
+    @State private var isShowingAdvancedThresholdPicker = false
     @State private var selectedThresholdEventMode = ThresholdEventMode.coldNights
     @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
     @State private var selectedThresholdRiskPoint: ThresholdRiskChartPoint?
@@ -102,11 +104,71 @@ struct ClimateGraphView: View {
         )
     }
     
-    ///threshold buttons can change based on mode: cold nights, first/last warm afternoon, warm afternoon lock in, and
-    ///mild night onset.
-    private var thresholdPresets: [Double] {
-        selectedThresholdEventMode.thresholdPresets
+    /// Provider-agnostic summaries already persisted inside a newly-generated
+    /// US or Canadian profile.
+    private var storedThresholdSummaries:
+        [ClimateThresholdSummary] {
+        
+        location
+            .generatedClimateProfile?
+            .thresholdSummaries
+            ?? []
     }
+    
+    /// Constructs the exact scientific definition represented by the
+    /// current UI mode and one temperature button.
+    private func thresholdDefinition(
+        for threshold: Double
+    ) -> ClimateThresholdDefinition {
+        
+        ClimateThresholdDefinition(
+            threshold: threshold,
+            field: selectedThresholdEventMode.field,
+            comparison: selectedThresholdEventMode.comparison,
+            springEventChoice: selectedThresholdEventMode.springEventChoice,
+            fallEventChoice: selectedThresholdEventMode.fallEventChoice
+        )
+    }
+    
+    /// Keeps the intentionally-curated UI presets, while hiding any preset
+    /// not available in a stored profile.
+    private var thresholdPresets: [Double] {
+        let availableSet =
+            Set(availableThresholds)
+        
+        return selectedThresholdEventMode
+            .thresholdPresets
+            .filter {
+                availableSet.contains($0)
+            }
+    }
+    
+    /// Every catalog threshold available for the current family. Generated profiles are additionally
+    /// limited to definitions actually stored inside that profile.
+    private var availableThresholds: [Double] {
+        let catalogThresholds =
+            selectedThresholdEventMode
+                .family
+                .thresholdPresets
+        
+        guard storedThresholdSummaries.isEmpty == false else {
+            return catalogThresholds
+        }
+        
+        let storedDefinitions =
+            Set(
+                storedThresholdSummaries.map(
+                    \.definition
+                )
+            )
+        
+        return catalogThresholds.filter { threshold in
+            storedDefinitions.contains(
+                thresholdDefinition(for: threshold)
+            )
+        }
+    }
+    
     ///convert a double like 32.0 into a display text like "32"
     private func thresholdText(_ threshold: Double) -> String {
         threshold.formatted(.number.precision(.fractionLength(0)))
@@ -115,7 +177,7 @@ struct ClimateGraphView: View {
     /// Filter out the threshold presets we are not using. For example, cold nights = [20, 28, 32, 36, 40, 45]
     /// But selectedThresholds might be = [28, 32, 40]
     private var sortedSelectedThresholds: [Double] {
-        thresholdPresets.filter { threshold in
+        availableThresholds.filter { threshold in
             selectedThresholds.contains(threshold)
         }
     }
@@ -127,6 +189,22 @@ struct ClimateGraphView: View {
 
         return selectedTexts.isEmpty ? "none" : selectedTexts.joined(separator: ", ")
     }
+    
+    /// Displays the source period without assuming every provider necessarily uses the
+    /// 1991 - 2020 forever.
+    private var thresholdSourcePeriodText: String {
+        let representativeSummary =
+        thresholdSummaries.first
+        ?? storedThresholdSummaries.first
+        
+        guard let representativeSummary else {
+            return "1991-2020"
+        }
+        
+        return
+            "\(representativeSummary.startYear)-\(representativeSummary.endYear)"
+    }
+    
     ///makes it possible to select mult temperatures. Ensures the user can never deselect everything.
     private func toggleThreshold(_ threshold: Double) {
         /// Asks is the clicked threshold (like 32 F) already selected? Only allows us to deselect a threshold if there
@@ -144,44 +222,51 @@ struct ClimateGraphView: View {
     }
     
     private func resetThresholdsForSelectedMode() {
-        let presets = selectedThresholdEventMode.thresholdPresets
-        let stillValidThresholds = selectedThresholds.filter { threshold in            presets.contains(threshold)
-        }
-        ///select the first preset mode. The ?? 32.0 is fallback protection in case some
-        ///future mode accidentally has an empty preset list
-        if stillValidThresholds.isEmpty {
-            selectedThresholds = [presets.first ?? 32.0]
+        let validThresholds =
+            selectedThresholds.filter { threshold in
+                availableThresholds.contains(
+                    threshold
+                )
+            }
+        
+        if validThresholds.isEmpty {
+            let defaultThreshold =
+                thresholdPresets.first
+                ?? availableThresholds.first
+                ?? 32.0
+            
+            selectedThresholds =
+                [defaultThreshold]
         } else {
-            selectedThresholds = stillValidThresholds
+            selectedThresholds =
+                validThresholds
         }
-        ///updates the results using the new mode/thresholds
+        
         recalculateThresholdSummaries()
     }
     
     ///same function riskDateText, different parameter list. Swift can tell which one you mean whether we include the argument 'season'
     private func riskDateText(
-        for riskPoint: ACISThresholdRiskPoint,
+        for riskPoint: ClimateThresholdRiskPoint,
         season: ThresholdRiskSeason
     ) -> String {
         switch season {
-        /// Shows the spring number, i.e. last spring freeze.
+            
         case .spring:
-            return ACISThresholdCalculator.monthDayText(
-                fromAverageDayOfYear: riskPoint.springRiskDay
-            )
-        
-        /// Shows the fall number, e.g. first fall freeze.
+            return ClimateCalendar.monthDayText(
+                fromClimatologicalDay: riskPoint.springRiskDay
+            ) ?? "none"
+            
         case .fall:
-            return ACISThresholdCalculator.monthDayText(
-                fromAverageDayOfYear: riskPoint.fallRiskDay
-            )
+            return ClimateCalendar.monthDayText(
+                fromClimatologicalDay: riskPoint.fallRiskDay
+            ) ?? "none"
         }
     }
-    
     /// Formatting helper for graph. Let's us verify the calculations before
     /// drawing endpoint markers on the graph
     private func observedRangeText(
-        for summary: ACISThresholdSummary
+        for summary: ClimateThresholdSummary
     ) -> String {
         let earliestDay: Double?
         let latestDay: Double?
@@ -200,39 +285,40 @@ struct ClimateGraphView: View {
             return "none"
         }
         
-        let earliestText = ACISThresholdCalculator.monthDayText(
-            fromAverageDayOfYear: earliestDay
-        )
+        let earliestText = ClimateCalendar.monthDayText(
+            fromClimatologicalDay: earliestDay
+        ) ?? "none"
         
-        let latestText = ACISThresholdCalculator.monthDayText(
-            fromAverageDayOfYear: latestDay
-        )
+        let latestText = ClimateCalendar.monthDayText(
+            fromClimatologicalDay: latestDay
+        ) ?? "none"
         
         return "\(earliestText)-\(latestText)"
     }
     
     /// Joins the spring and fall coordinate branches into one observed annual occurence extent.
     private func fullObservedExtentText(
-        for summary: ACISThresholdSummary
+        for summary: ClimateThresholdSummary
     ) -> String {
         guard let earliestSpringDay = summary.earliestSpringEventDay,
               let latestFallDay = summary.latestFallEventDay else {
             return "none"
         }
         
-        let earliestText = ACISThresholdCalculator.monthDayText(
-            fromAverageDayOfYear: earliestSpringDay
-        )
+        let earliestText = ClimateCalendar.monthDayText(
+            fromClimatologicalDay: earliestSpringDay
+        ) ?? "none"
         
-        let latestText = ACISThresholdCalculator.monthDayText(
-            fromAverageDayOfYear: latestFallDay
-        )
+        let latestText = ClimateCalendar.monthDayText(
+            fromClimatologicalDay: latestFallDay
+        ) ?? "none"
+        
         return "\(earliestText) → \(latestText)"
     }
     
     ///One risk Point might contain: percent: 50 | springRiskDay: 133.0 (may 13) | fallRiskDay: 253.0 (Sep 10)
     ///the chart will only draw one season at a time
-    private func riskDay(for riskPoint: ACISThresholdRiskPoint) -> Double? {
+    private func riskDay(for riskPoint: ClimateThresholdRiskPoint) -> Double? {
         switch selectedThresholdRiskSeason {
         case .spring:
             return riskPoint.springRiskDay
@@ -324,34 +410,65 @@ struct ClimateGraphView: View {
             }
         }
     }
-    ///Separate downloaded raw ACIS data from calculated threshold summaries
-    ///the first let statement says "If someone handed me fresh observations, use those. otherwise, use the observations
-    ///we already have saved in states.
-    ///
-    ///remember thresholdObservations have all daily minimum temperatures from 1991-2020. It is a huge array.
-    private func recalculateThresholdSummaries(from observations: [ACISDailyObservation]? = nil) {
-        let sourceObservations = observations ?? thresholdObservations
-        ///If we have no ACIS daily rows yet, clear the summary list and stop.
+    /// Uses stored provider-neutral summaries when available. ACIS
+    /// observations remain a backward-compatible fallback.
+    
+    private func recalculateThresholdSummaries(
+        from observations:
+            [ACISDailyObservation]? = nil
+    ) {
+        let requestedDefinitions =
+            Set(
+                sortedSelectedThresholds.map {
+                    threshold in
+                    
+                    thresholdDefinition(for: threshold)
+                }
+            )
+        
+        if storedThresholdSummaries.isEmpty == false {
+            thresholdSummaries =
+                storedThresholdSummaries
+                    .filter { summary in
+                        requestedDefinitions.contains(
+                            summary.definition
+                        )
+                    }
+                    .sorted { first, second in
+                        first.threshold < second.threshold
+                    }
+            
+            thresholdSummaryErrorMessage = nil
+            
+            return
+        }
+        
+        let sourceObservations =
+            observations ?? thresholdObservations
+        
         guard sourceObservations.isEmpty == false else {
             thresholdSummaries = []
             return
         }
-        ///For every selected threshold (20, 28, 32, 36, 40) run the calculator five times. and produce
-        ///five ACISThresholdSummary value. The calculations change with the threshold
-        ///the raw data stays the same
-        thresholdSummaries = sortedSelectedThresholds.map { threshold in
-            ACISThresholdCalculator.thresholdSummary(
-                from: sourceObservations,
-                startYear: 1991,
-                endYear: 2020,
-                threshold: threshold,
-                field: selectedThresholdEventMode.field,
-                comparison: selectedThresholdEventMode.comparison,
-                springEventChoice: selectedThresholdEventMode.springEventChoice,
-                fallEventChoice: selectedThresholdEventMode.fallEventChoice
-            )
-        }
+        
+        /// Fallback for old/built-in stations.
+        let climateObservations =
+            ACISClimateDailyObservationAdapter
+                .observations(from: sourceObservations)
+        
+        thresholdSummaries =
+            sortedSelectedThresholds.map { threshold in
+                ClimateThresholdCalculator
+                    .thresholdSummary(
+                        from: climateObservations,
+                        startYear: 1991,
+                        endYear: 2020,
+                        definition: thresholdDefinition(for: threshold)
+                    )
+            
+            }
     }
+    
     ///threshold seasons & weather for the year both use the same raw ACIS rows, but they produce different derived
     ///products. this keeps those calculations separate
     private func recalculateWeatherYearDays(from observations: [ACISDailyObservation]? = nil) {
@@ -381,7 +498,7 @@ struct ClimateGraphView: View {
     ///basically go get ACIS data, save it, then calculate summary.
     private func loadThresholdSummary() async {
         isLoadingThresholdSummary = true
-        thresholdSummaryStatus = "Loading ACIS threshold data..."
+        thresholdSummaryErrorMessage = nil
         ///run this later when the function is about to exit. because the function might succeed or fail.
         defer {
             isLoadingThresholdSummary = false
@@ -411,11 +528,12 @@ struct ClimateGraphView: View {
             }
             recalculateThresholdSummaries(from: thresholdPeriodObservations)
             recalculateWeatherYearDays(from: observations)
-            thresholdSummaryStatus = "Loaded \(observations.count) ACIS daily rows. \(weatherYearDays.count) weather-year days ready."
+            thresholdSummaryErrorMessage = nil
             ///if ACIS fails, we should clear all derived ACIS products.
         } catch {
             thresholdSummaries = []
-            thresholdSummaryStatus = "ACIS threshold load failed: \(error.localizedDescription)"
+            thresholdSummaryErrorMessage =
+                "ACIS threshold load failed: \(error.localizedDescription)"
             thresholdObservations = []
             weatherYearDays = []
             weatherYearRecordInfo = nil
@@ -473,7 +591,19 @@ struct ClimateGraphView: View {
             return
         }
         
-        guard loadedACISStationID != location.acisStationID || thresholdObservations.isEmpty else {
+        /// Threshold graphs for newly-generated profiles need no
+        /// network request because their summaries are persistent (on disk).
+        if graphType == .thresholdSeasons,
+           storedThresholdSummaries.isEmpty == false {
+            
+            recalculateThresholdSummaries()
+            return
+        }
+        
+        guard loadedACISStationID
+                != location.acisStationID
+                || thresholdObservations.isEmpty
+        else {
             return
         }
         
@@ -1118,9 +1248,21 @@ struct ClimateGraphView: View {
                 }
                 .allowsHitTesting(false)
             }
-            .frame(height: 320)
+            .frame(height: 480)
         }
     }
+    
+    private var selectedModeSupportsLockInStatus: Bool {
+        switch selectedThresholdEventMode {
+            
+        case .coldNights, .warmAfternoonLockIn:
+            return true
+            
+        case .warmAfternoon, .mildNights:
+            return false
+        }
+    }
+    
     ///nice formatting for the table:
     private var thresholdRiskTable: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1140,7 +1282,7 @@ struct ClimateGraphView: View {
                     Text("Observed range")
                         .fontWeight(.semibold)
                     
-                    if selectedThresholdEventMode == .warmAfternoonLockIn {
+                    if selectedModeSupportsLockInStatus {
                         Text("Lock-in status")
                             .fontWeight(.semibold)
                     }
@@ -1148,7 +1290,7 @@ struct ClimateGraphView: View {
 
                 Divider()
                     .gridCellColumns(
-                        selectedThresholdEventMode == .warmAfternoonLockIn ? 12 : 11
+                        selectedModeSupportsLockInStatus ? 12 : 11
                     )
 
                 ForEach(thresholdSummaries, id: \.threshold) { summary in
@@ -1175,7 +1317,7 @@ struct ClimateGraphView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                         
-                        if selectedThresholdEventMode == .warmAfternoonLockIn {
+                        if selectedModeSupportsLockInStatus {
                             if summary.hasMeaningfulSpringLockIn {
                                 Label("Established", systemImage: "checkmark.circle.fill")
                                     .foregroundStyle(.green)
@@ -1191,83 +1333,301 @@ struct ClimateGraphView: View {
         }
     }
     
-    private var thresholdSeasonsChart: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Threshold Seasons")
-                .font(.title2)
-                .fontWeight(.semibold)
+    /// Popover contents
+    private var advancedThresholdPicker: some View {
+        let selectedCount =
+            availableThresholds.filter {
+                selectedThresholds.contains($0)
+            }
+            .count
+        
+        return VStack(
+            alignment: .leading,
+            spacing: 14
+        ) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Advanced Thresholds")
+                        .font(.headline)
+                    
+                    Text(
+                        "\(selectedThresholdEventMode.title) · \(availableThresholds.count) available"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                Button("Done") {
+                    isShowingAdvancedThresholdPicker = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
             
-            Text("Station: \(location.acisStationID)")
+            Divider()
+            
+            LazyVGrid(
+                columns: [
+                    GridItem(
+                        .adaptive(minimum: 90),
+                        spacing: 10
+                    )
+                ],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                ForEach(
+                    availableThresholds,
+                    id: \.self
+                ) { threshold in
+                    
+                    let isSelected =
+                        selectedThresholds.contains(
+                            threshold
+                        )
+                    
+                    Toggle(
+                        isOn: Binding(
+                            
+                            /// Creates a custom Binding<Bool> for the checkbox. Get answers:
+                            /// "Is this threshold currrently selected?" If set contains 32, the 32 F
+                            /// checkbox appears checked.
+                            ///
+                            /// Set runs when the user changes the checkbox. SwiftUI provides the new Boolean value, but
+                            /// the underscore means ignore that value.
+                            
+                            get: {
+                                selectedThresholds.contains(threshold)
+                            },
+                            set: {_ in
+                                toggleThreshold(threshold)
+                            }
+                        )
+                    ) {
+                        Text(
+                            "\(thresholdText(threshold))°F"
+                        )
+                        .monospacedDigit()
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(
+                        isSelected && selectedThresholds.count == 1
+                    )
+                }
+            }
+            
+            Divider()
+            
+            HStack {
+                Button("Use Common Set") {
+                    selectedThresholds =
+                        Set(thresholdPresets)
+                }
+                
+                Button("Select All") {
+                    selectedThresholds =
+                        Set(availableThresholds)
+                }
+                
+                Spacer()
+                
+                Text(
+                    "\(selectedCount) selected"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            }
+        }
+        .padding()
+        .frame(width: 430)
+    }
+    
+    private var thresholdSelectionControls: some View {
+        HStack(spacing: 8) {
+            Text("Thresholds")
                 .font(.headline)
             
-            Text("Min temperature thresholds: \(selectedThresholdText), 1991-2020")
+            ForEach(
+                thresholdPresets,
+                id: \.self
+                
+            ) { threshold in
+                
+                let isSelected =
+                    selectedThresholds.contains(threshold)
+                
+                Button {
+                    toggleThreshold(threshold)
+                } label: {
+                    Text("\(thresholdText(threshold))°F")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            isSelected
+                                ? Color.accentColor.opacity(0.25)
+                                : Color.white.opacity(0.08)
+                        )
+                        .foregroundStyle(
+                            isSelected
+                                ? Color.accentColor
+                                : Color.primary
+                        )
+                        .clipShape(
+                            RoundedRectangle(cornerRadius: 6)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(
+                    isSelected &&
+                        selectedThresholds.count == 1
+                )
+            }
+            
+            Button {
+                isShowingAdvancedThresholdPicker = true
+            } label: {
+                Label(
+                    "Advanced",
+                    systemImage: "slider.horizontal.3"
+                )
+            }
+            .popover(
+                isPresented:
+                    $isShowingAdvancedThresholdPicker,
+                arrowEdge: .bottom
+            ) {
+                advancedThresholdPicker
+            }
+            .help(
+                "Choose from every available temperature threshold."
+            )
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+    
+    private var thresholdPresentationControls: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 4) {
+                Text("Season")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Picker(
+                    "Risk season",
+                    selection: $selectedThresholdRiskSeason
+                ) {
+                    ForEach(
+                        ThresholdRiskSeason.allCases
+                    ) { season in
+                        Text(season.title)
+                            .tag(season)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+            }
+            
+            HStack(spacing: 4) {
+                Text("View")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Picker(
+                    "Output",
+                    selection: $thresholdOutputMode
+                ) {
+                   ForEach(
+                        ThresholdOutputMode.allCases
+                   ) { mode in
+                       Text(mode.title)
+                           .tag(mode)
+                   }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 130)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+    
+    private var thresholdSeasonsChart: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Text(
+                    "\(location.acisStationID) · \(thresholdSourcePeriodText)"
+                )
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-            ///mode picker UI
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                
+                Spacer()
+                
+                Label(
+                    selectedThresholdEventMode.technicalLabel,
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help(selectedThresholdEventMode.explanation)
+            }
+            
+            /// Mode picker UI
+            HStack(spacing: 8) {
                 Text("Thermal event")
                     .font(.headline)
                 
-                Picker("Thermal event", selection: $selectedThresholdEventMode) {
-                    ForEach(ThresholdEventMode.allCases) { mode in
+                Picker(
+                    "Thermal event",
+                    selection:
+                        $selectedThresholdEventMode
+                ) {
+                    ForEach(
+                        ThresholdEventMode.allCases
+                    ) { mode in
                         Text(mode.title)
                             .tag(mode)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented)
-                .onChange(of: selectedThresholdEventMode) {
+                .onChange(
+                    of: selectedThresholdEventMode
+                ) {
                     resetThresholdsForSelectedMode()
                 }
             }
-            Text(selectedThresholdEventMode.technicalLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            
-            Text(selectedThresholdEventMode.explanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Temperature thresholds")
-
-                ForEach(thresholdPresets, id: \.self) { threshold in
-                    let isSelected = selectedThresholds.contains(threshold)
-
-                    Button {
-                        toggleThreshold(threshold)
-                    } label: {
-                        Text("\(thresholdText(threshold))°F")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(isSelected ? Color.accentColor.opacity(0.25) : Color.white.opacity(0.08))
-                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    thresholdSelectionControls
+                    
+                    Spacer(minLength: 8)
+                    
+                    thresholdPresentationControls
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    thresholdSelectionControls
+                    
+                    HStack {
+                        Spacer()
+                        
+                        thresholdPresentationControls
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isSelected && selectedThresholds.count == 1)
                 }
             }
-            Picker("Risk season", selection: $selectedThresholdRiskSeason) {
-                ForEach(ThresholdRiskSeason.allCases) { season in
-                    Text(season.title)
-                        .tag(season)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
             
-            Picker("Output", selection: $thresholdOutputMode) {
-                ForEach(ThresholdOutputMode.allCases) { mode in
-                    Text(mode.title)
-                        .tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
             
-            Text(thresholdSummaryStatus)
-                .foregroundStyle(.secondary)
+            
+            if let thresholdSummaryErrorMessage {
+                Text(thresholdSummaryErrorMessage)
+                    .foregroundStyle(.red)
+            }
             
             if isLoadingThresholdSummary {
                 ProgressView()
@@ -1294,6 +1654,7 @@ struct ClimateGraphView: View {
         }
         
     }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {

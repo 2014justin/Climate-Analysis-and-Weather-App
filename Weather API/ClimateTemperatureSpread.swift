@@ -34,7 +34,7 @@ enum ClimateTemperatureSpreadCalculator {
         
         for observation in observations {
             guard let dayOfYear =
-                    climatologicalDayOfYear(for: observation.localDate)
+                    ClimateCalendar.climatologicalDayOfYear(for: observation.localDate)
             else {
                 continue
             }
@@ -84,54 +84,4 @@ enum ClimateTemperatureSpreadCalculator {
         }
     }
     
-    /// Produces exactly 365 provider-agnostic records, independently calculates Tmin and Tmax spreads,
-    /// excludes Feb 29, ignores unusable/non-finite readings, and retains sample counts for debugging.
-    private static func climatologicalDayOfYear(
-        for climateDate: ClimateDate
-    ) -> Int? {
-        
-        guard !(climateDate.month == 2
-                && climateDate.day == 29) else {
-            return nil
-        }
-        
-        var calendar =
-            Calendar(identifier: .gregorian)
-        
-        calendar.timeZone =
-            TimeZone(secondsFromGMT: 0)
-            ?? .current
-        
-        let components = DateComponents(
-            year: 2001,
-            month: climateDate.month,
-            day: climateDate.day
-        )
-        
-        guard let referenceDate =
-                calendar.date(from: components),
-              /// month
-                calendar.component(
-                .month,
-                from: referenceDate
-              ) == climateDate.month,
-              
-                /// Day. Prevents an invalid date like April 31 from being normalized into May.
-              
-                calendar.component(
-                    .day,
-                    from: referenceDate
-                ) == climateDate.day,
-                
-              let dayOfYear =
-                calendar.ordinality(
-                    of: .day,
-                    in: .year,
-                    for: referenceDate
-                ) else {
-            return nil
-        }
-        
-        return dayOfYear
-    }
 }

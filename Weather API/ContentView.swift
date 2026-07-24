@@ -486,22 +486,15 @@ struct SeasonalWindowBar: View {
         min(max(position, 22), max(22, width - 22))
     }
     
-    private func shortDateText(for day: Double) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    /// Numeric short date, e.g. 8/11.
+    private func shortDateText(
+        for day: Double
+    ) -> String {
         
-        guard let date = calendar.date(
-            from: DateComponents(year: 2001, day: Int(day.rounded()))
-        ) else {
-            return "-"
-        }
-        
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "M/d"
-        
-        return formatter.string(from: date)
+        ClimateCalendar.monthDayText(
+            fromClimatologicalDay: day,
+            style: .numeric
+        ) ?? "-"
     }
     
     private func boundaryLabel(percent: String, day: Double) -> some View {
@@ -652,8 +645,12 @@ struct ContentView: View {
     @State private var liveSeasonalPhaseStatus = "Current weather year not loaded yet."
     @State private var thresholdNormalPeriodObservations: [ACISDailyObservation] = []
     @State private var thresholdWidgetStatus = "Normal-period thresholds not loaded yet."
-    @State private var thresholdWidgetFreezeSummary: ACISThresholdSummary?
-    @State private var thresholdWidgetWarmSummaries: [ACISThresholdSummary] = []
+    @State private var thresholdWidgetFreezeSummary:
+        ClimateThresholdSummary?
+    @State private var thresholdWidgetHardFreezeSummary:
+        ClimateThresholdSummary?
+    @State private var thresholdWidgetWarmSummaries:
+        [ClimateThresholdSummary] = []
     @State private var forecastDiscussion: ForecastDiscussion?
     @State private var isShowingForecastDiscussion = false
     @State private var isLoadingForecastDiscussion = false
@@ -1098,37 +1095,6 @@ struct ContentView: View {
         }
     }
     
-    /// Creates the shared smoothed series for our hysteresis widget and graph.
-    private func referenceDayOfYear(for date: Date) -> Int? {
-        var localCalendar = Calendar(identifier: .gregorian)
-        localCalendar.timeZone = selectedLocation.timeZone
-        
-        let components = localCalendar.dateComponents([.month, .day], from: date)
-        
-        guard let month = components.month,
-              var day = components.day else {
-            return nil
-        }
-        
-        if month == 2 && day == 29 {
-            day = 28
-        }
-        
-        var referenceCalendar = Calendar(identifier: .gregorian)
-        referenceCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        
-        guard let referenceDate = referenceCalendar.date(
-            from: DateComponents(year: 2001, month: month, day: day)
-        ) else {
-            return nil
-        }
-        
-        return referenceCalendar.ordinality(
-            of: .day,
-            in: .year,
-            for: referenceDate
-        )
-    }
     
     /// This function forces any integer onto the repeating interval 1...365. For example 370 % 365 == 5, because day 370 is day 5.
     /// The extra + 365 makes it so we don't have a negative remainder.
@@ -1161,7 +1127,11 @@ struct ContentView: View {
             let date = entry.key
             let points = entry.value
             
-            guard let dayOfYear = referenceDayOfYear(for: date),
+            guard let dayOfYear = ClimateCalendar.climatologicalDayOfYear(
+                for: date,
+                in: selectedLocation.timeZone,
+                leapDayPolicy: .mapToFebruary28
+            ),
                   let minimum = points.map(\.temperatureFahrenheit).min() else {
                 return
             }
@@ -1819,47 +1789,47 @@ struct ContentView: View {
         }
     }
     
-    ///Places a reference date for our threshold seasons climate widget.
-    private var selectedLocationReferenceDayOfYear: Double {
-        var localCalendar = Calendar(identifier: .gregorian)
-        localCalendar.timeZone = selectedLocation.timeZone
-        
-        let localComponents = localCalendar.dateComponents(
-            [.month, .day],
-            from: Date()
+    /// Places today on the stable climatological calendar using
+    /// the selected station's local timezone.
+    private var selectedLocationReferenceDayOfYear:
+    Double {
+        Double(
+            ClimateCalendar
+                .climatologicalDayOfYear(
+                    for: Date(),
+                    in:
+                        selectedLocation.timeZone,
+                    leapDayPolicy:
+                            .mapToFebruary28
+                )
+            ?? 1
         )
+    }
+    
+    private var adaptiveFreezeFreeSummary: ClimateThresholdSummary? {
         
-        var referenceCalendar = Calendar(identifier: .gregorian)
-        referenceCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        
-        guard let month = localComponents.month,
-              let day = localComponents.day,
-              let referenceDate = referenceCalendar.date(
-                from: DateComponents(year: 2001, month: month, day : day)
-              ),
-              let dayOfYear = referenceCalendar.ordinality(
-                of: .day,
-                in: .year,
-                for: referenceDate
-              ) else {
-            return 1.0
-        }
-        
-        return Double(dayOfYear)
+        [
+            thresholdWidgetFreezeSummary,
+            thresholdWidgetHardFreezeSummary
+        ]
+            .compactMap { $0 }
+            .first { summary in
+                summary.hasMeaningfulSpringLockIn &&
+                summary.completeSeasonCount >= 15
+                
+            }
     }
     
     /// Creates an adaptive selector and display its chosen threshold as a compact row.
     /// It requires a climatologically meaningful spring lock-in, at least 15 complete seasons.
     /// Most importantly today lying between the 90% spring and fall outer boudnaries -- at least 10%
     /// historical season membership. Of all the qualifying  thresholds, select the highest.
-    private var adaptiveWarmLockInSummary: ACISThresholdSummary? {
+    private var adaptiveWarmLockInSummary: ClimateThresholdSummary? {
         let currentDay = selectedLocationReferenceDayOfYear
         
         return thresholdWidgetWarmSummaries
             .filter { summary in
-                let ninetyPercentPoint = summary.thresholdRiskPoints.first {
-                    $0.percent == 90.0
-                }
+                let ninetyPercentPoint = summary.riskPoint(eventRiskPercent: 90.0)
                 
                 guard summary.hasMeaningfulSpringLockIn,
                       summary.completeSeasonCount >= 15,
@@ -1877,13 +1847,17 @@ struct ContentView: View {
     }
     
     private var thresholdSeasonsCard: some View {
-        let tenPercentRiskPoint = thresholdWidgetFreezeSummary?
-            .thresholdRiskPoints
-            .first { $0.percent == 10.0 }
         
-        let ninetyPercentRiskPoint = thresholdWidgetFreezeSummary?
-            .thresholdRiskPoints
-            .first { $0.percent == 90.0 }
+        let selectedFreezeSummary =
+            adaptiveFreezeFreeSummary
+        
+        let tenPercentRiskPoint =
+            selectedFreezeSummary?
+                .riskPoint(eventRiskPercent: 10.0)
+        
+        let ninetyPercentRiskPoint =
+            selectedFreezeSummary?
+                .riskPoint(eventRiskPercent: 90.0)
         
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1905,7 +1879,7 @@ struct ContentView: View {
                 .help("Open threshold seasons.")
             }
             
-            if let freezeSummary = thresholdWidgetFreezeSummary {
+            if let freezeSummary = selectedFreezeSummary {
                 HStack(spacing: 10) {
                     Image(systemName: "snowflake")
                         .font(.title3)
@@ -1913,8 +1887,11 @@ struct ContentView: View {
                         .frame(width: 26)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("32°F Freeze-Free")
-                            .font(.subheadline.weight(.semibold))
+                        Text(
+                            freezeSummary.threshold == 32.0
+                            ? "32 °F Freeze-Free"
+                            : "28 °F Hard-Freeze-Free"
+                        )
                         
                         Text("10-90% climatological bounds")
                             .font(.caption2)
@@ -1942,56 +1919,76 @@ struct ContentView: View {
                         .foregroundStyle(DashboardTheme.textSecondary)
                 }
                 
-                if let warmSummary = adaptiveWarmLockInSummary {
-                    let tenPercentPoint = warmSummary.thresholdRiskPoints.first {
-                        $0.percent == 10.0
-                    }
-                    
-                    let ninetyPercentPoint = warmSummary.thresholdRiskPoints.first {
-                        $0.percent == 90.0
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sun.max.fill")
-                                .foregroundStyle(DashboardTheme.normal)
-                            
-                            Text(
-                                "\(warmSummary.threshold, specifier: "%.0f")°F+ Afternoon Lock-In"
-                            )
-                            .font(.caption.weight(.semibold))
-                            
-                            Spacer()
-                        }
-                        
-                        if let leftOuterDay = ninetyPercentPoint?.springRiskDay,
-                           let leftInnerDay = tenPercentPoint?.springRiskDay,
-                           let rightInnerDay = tenPercentPoint?.fallRiskDay,
-                           let rightOuterDay = ninetyPercentPoint?.fallRiskDay {
-                            
-                            SeasonalWindowBar(
-                                leftOuterDay: leftOuterDay,
-                                leftInnerDay: leftInnerDay,
-                                rightInnerDay: rightInnerDay,
-                                rightOuterDay: rightOuterDay,
-                                currentDay: selectedLocationReferenceDayOfYear
-                            )
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                Text("\(freezeSummary.completeSeasonCount) complete seasons")
-                    .font(.caption)
-                    .foregroundStyle(DashboardTheme.textSecondary)
             } else {
-                Spacer()
-                
-                Text(thresholdWidgetStatus)
+                Text("No reliable freeze-free saason")
                     .font(.caption)
                     .foregroundStyle(DashboardTheme.textSecondary)
             }
+            
+            if let warmSummary =
+                adaptiveWarmLockInSummary {
+                
+                let tenPercentPoint =
+                    warmSummary.riskPoint(eventRiskPercent: 10.00)
+                
+                let ninetyPercentPoint =
+                    warmSummary.riskPoint(eventRiskPercent: 90.00)
+                
+                VStack(
+                    alignment: .leading,
+                    spacing: 4
+                ) {
+                    HStack(spacing: 6) {
+                        Image(
+                            systemName: "sun.max.fill"
+                        )
+                        .foregroundStyle(DashboardTheme.normal)
+                        
+                        Text(
+                            "\(warmSummary.threshold, specifier: "%.0f")°F+ Afternoon Lock-In"
+                        )
+                        .font(.caption.weight(.semibold))
+                        
+                        Spacer()
+                    }
+                    
+                    if let leftOuterDay =
+                        ninetyPercentPoint?.springRiskDay,
+                       let leftInnerDay =
+                        tenPercentPoint?.springRiskDay,
+                       let rightInnerDay =
+                        tenPercentPoint?.fallRiskDay,
+                       let rightOuterDay =
+                        ninetyPercentPoint?.fallRiskDay {
+                        
+                        SeasonalWindowBar(
+                            leftOuterDay: leftOuterDay,
+                            leftInnerDay: leftInnerDay,
+                            rightInnerDay: rightInnerDay,
+                            rightOuterDay: rightOuterDay,
+                            currentDay: selectedLocationReferenceDayOfYear
+                        )
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            if let summaryForCount =
+                selectedFreezeSummary ??
+                adaptiveWarmLockInSummary {
+                
+                Text(
+                    "\(summaryForCount.completeSeasonCount) complete seasons"
+                )
+                .font(.caption)
+                .foregroundStyle(DashboardTheme.textSecondary)
+            } else {
+                Text("No active threshold season.")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
+            
         }
         .padding(12)
         .frame(
@@ -2113,6 +2110,101 @@ struct ContentView: View {
         }
     }
     
+    /// Selects the compact widget's freeze and adaptive summaries from any
+    /// provider-neutral summary collection.
+    private func applyThresholdWidgetSummaries(
+        _ summaries: [ClimateThresholdSummary]
+    ) {
+        let coldNightDefinitions =
+            ClimateThresholdFamily
+                .coldNights
+                .definitions
+
+        let freezeDefinition =
+            coldNightDefinitions.first { definition in
+                definition.threshold == 32.0
+            }
+
+        let hardFreezeDefinition =
+            coldNightDefinitions.first { definition in
+                definition.threshold == 28.0
+            }
+
+        let warmDefinitions =
+            Set(
+                ClimateThresholdFamily
+                    .warmAfternoonLockIn
+                    .definitions
+            )
+
+        thresholdWidgetFreezeSummary =
+            freezeDefinition.flatMap { definition in
+                summaries.first { summary in
+                    summary.definition == definition
+                }
+            }
+
+        thresholdWidgetHardFreezeSummary =
+            hardFreezeDefinition.flatMap { definition in
+                summaries.first { summary in
+                    summary.definition == definition
+                }
+            }
+
+        thresholdWidgetWarmSummaries =
+            summaries
+                .filter { summary in
+                    warmDefinitions.contains(
+                        summary.definition
+                    )
+                }
+                .sorted { first, second in
+                    first.threshold < second.threshold
+                }
+
+        let selectedFreezeSummary =
+            [
+                thresholdWidgetFreezeSummary,
+                thresholdWidgetHardFreezeSummary
+            ]
+            .compactMap { $0 }
+            .first { summary in
+                summary.hasMeaningfulSpringLockIn &&
+                summary.completeSeasonCount >= 15
+            }
+
+        guard let selectedFreezeSummary else {
+            thresholdWidgetStatus =
+                "No reliable 32°F or 28°F freeze-free season"
+            return
+        }
+
+        let medianRiskPoint =
+            selectedFreezeSummary.riskPoint(
+                eventRiskPercent: 50.0
+            )
+
+        let springText =
+            ClimateCalendar.monthDayText(
+                fromClimatologicalDay:
+                    medianRiskPoint?.springRiskDay
+            ) ?? "none"
+
+        let fallText =
+            ClimateCalendar.monthDayText(
+                fromClimatologicalDay:
+                    medianRiskPoint?.fallRiskDay
+            ) ?? "none"
+
+        let seasonName =
+            selectedFreezeSummary.threshold == 32.0
+                ? "32°F freeze-free"
+                : "28°F hard-freeze-free"
+
+        thresholdWidgetStatus =
+            "\(seasonName): \(springText) → \(fallText)"
+    }
+    
     ///Threshold loader. Only requests Tmax and Tmin because that's all we need.
     private func loadThresholdWidgetClimateData() async {
         let requestedLocation = selectedLocation
@@ -2120,7 +2212,19 @@ struct ContentView: View {
         thresholdNormalPeriodObservations = []
         thresholdWidgetWarmSummaries = []
         thresholdWidgetFreezeSummary = nil
-        thresholdWidgetStatus = "Loading 1991-2020 threshold data..."
+        thresholdWidgetHardFreezeSummary = nil
+        thresholdWidgetStatus = "Loading normal-period threshold data..."
+        
+        if let storedSummaries =
+                requestedLocation
+                    .generatedClimateProfile?
+                    .thresholdSummaries,
+           storedSummaries.isEmpty == false {
+            
+            applyThresholdWidgetSummaries(storedSummaries)
+            
+            return
+        }
         
         do {
             let observations =
@@ -2136,64 +2240,107 @@ struct ContentView: View {
             
             thresholdNormalPeriodObservations = observations
             
-            let pairedTemperatureCount = observations.filter { observation in
-                observation.minimumTemperature != nil && observation.maximumTemperature != nil
+            let climateObservations =
+                ACISClimateDailyObservationAdapter
+                    .observations(from: observations)
+            
+            #if DEBUG
+            
+            let parityCases: [
+                (
+                    label: String,
+                    mode: ThresholdEventMode,
+                    threshold: Double
+                )
+            ] = [
+                (
+                    label: "32°F cold nights",
+                    mode: .coldNights,
+                    threshold: 32.0
+                ),
+                (
+                    label: "80°F warm afternoon",
+                    mode: .warmAfternoon,
+                    threshold: 80.0
+                ),
+                (
+                    label: "50°F afternoon lock-in",
+                    mode: .warmAfternoonLockIn,
+                    threshold: 50.0
+                ),
+                (
+                    label: "50°F mild nights",
+                    mode: .mildNights,
+                    threshold: 50.0
+                )
+            ]
+            
+            for parityCase in parityCases {
+                
+                let report =
+                    ClimateThresholdParityChecker
+                        .compare(
+                            label: "\(requestedLocation.name) - " + parityCase.label,
+                            observations: observations,
+                            startYear: GeneratedClimateProfileBuilder.normalStartYear,
+                            endYear: GeneratedClimateProfileBuilder.normalEndYear,
+                            threshold: parityCase.threshold,
+                            field: parityCase.mode.field,
+                            comparison: parityCase.mode.comparison,
+                            springEventChoice: parityCase.mode.springEventChoice,
+                            fallEventChoice: parityCase.mode.fallEventChoice
+                        )
+                
+                print(
+                    report.formattedText
+                )
             }
+            
+            #endif
+            
+            let pairedTemperatureCount =
+                climateObservations.filter { observation in
+                    observation
+                        .minimumTemperature
+                        .usableFahrenheit != nil
+                    && observation
+                        .maximumTemperature
+                        .usableFahrenheit != nil
+                }
                 .count
             
             if pairedTemperatureCount == 0 {
                 thresholdWidgetStatus = "No normal-period temperature data"
             } else {
-                let freezeSummary =
-                    ACISThresholdCalculator.thresholdSummary(
-                        from: observations,
-                        startYear: GeneratedClimateProfileBuilder.normalStartYear,
-                        endYear: GeneratedClimateProfileBuilder.normalEndYear,
-                        threshold: 32.0,
-                        field: .minimum,
-                        comparison: .lessThanOrEqual,
-                        springEventChoice: .last,
-                        fallEventChoice: .first
-                    )
-
-                thresholdWidgetFreezeSummary = freezeSummary
-                
-                let warmMode = ThresholdEventMode.warmAfternoonLockIn
-                
-                thresholdWidgetWarmSummaries = warmMode.thresholdPresets.map { threshold in
-                    ACISThresholdCalculator.thresholdSummary(
-                        from: observations,
-                        startYear: GeneratedClimateProfileBuilder.normalStartYear,
-                        endYear: GeneratedClimateProfileBuilder.normalEndYear,
-                        threshold: threshold,
-                        field: warmMode.field,
-                        comparison: warmMode.comparison,
-                        springEventChoice: warmMode.springEventChoice,
-                        fallEventChoice: warmMode.fallEventChoice
-                    )
-                }
-
-                let medianRiskPoint =
-                    freezeSummary.thresholdRiskPoints.first { riskPoint in
-                        riskPoint.percent == 50.0
+               let coldNightDefinitions =
+                    ClimateThresholdFamily
+                    .coldNights
+                    .definitions
+                    .filter { definition in
+                        definition.threshold == 32.0 ||
+                        definition.threshold == 28.0
                     }
-
-                let springText =
-                    ACISThresholdCalculator.monthDayText(
-                        fromAverageDayOfYear: medianRiskPoint?.springRiskDay
-                    )
-
-                let fallText =
-                    ACISThresholdCalculator.monthDayText(
-                        fromAverageDayOfYear: medianRiskPoint?.fallRiskDay
-                    )
-
-                if springText == "none" && fallText == "none" {
-                    thresholdWidgetStatus = "No defined 32°F freeze season"
-                } else {
-                    thresholdWidgetStatus =
-                        "32°F freeze-free: \(springText) → \(fallText)"
-                }
+                
+                let warmlockindefinitions =
+                    ClimateThresholdFamily
+                        .warmAfternoonLockIn
+                        .definitions
+                
+                let widgetDefinitions =
+                    coldNightDefinitions +
+                    warmlockindefinitions
+                
+                let widgetSummaries =
+                    widgetDefinitions.map { definition in
+                        ClimateThresholdCalculator
+                            .thresholdSummary(
+                                from: climateObservations,
+                                startYear: GeneratedClimateProfileBuilder.normalStartYear,
+                                endYear: GeneratedClimateProfileBuilder.normalEndYear,
+                                definition: definition
+                            )
+                    }
+                applyThresholdWidgetSummaries(widgetSummaries)
             }
         } catch {
             guard
@@ -2206,6 +2353,7 @@ struct ContentView: View {
             thresholdNormalPeriodObservations = []
             thresholdWidgetWarmSummaries = []
             thresholdWidgetFreezeSummary = nil
+            thresholdWidgetHardFreezeSummary = nil
             thresholdWidgetStatus = "Threshold climate data unavailable"
         }
     }

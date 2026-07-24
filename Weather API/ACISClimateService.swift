@@ -37,6 +37,15 @@ enum ACISClimateDailyObservationAdapter {
         )
     }
     
+    static func observations(
+        from sources: [ACISDailyObservation]
+    ) -> [ClimateDailyObservation] {
+        
+        sources.compactMap { source in
+            observation(from: source)
+        }
+    }
+    
     private static func temperatureReading(
         from value: Double?
     ) -> ClimateTemperatureReading {
@@ -102,6 +111,42 @@ enum ACISSeasonEventChoice {
         }
     }
 }
+/// Temporary compatibility while the legacy ACIS threshold calculator
+/// remains available for parity testing.
+///
+extension ClimateTemperatureField {
+    
+    func value(
+        from observation:
+            ACISDailyObservation
+    ) -> Double? {
+        
+        switch self {
+        case .minimum:
+            return observation.minimumTemperature
+            
+        case .maximum:
+            return observation.maximumTemperature
+        }
+    }
+}
+
+extension ClimateThresholdEventChoice {
+    
+    func date(
+        from dates: [Date]
+    ) -> Date? {
+        
+        switch self {
+        case .first:
+            return dates.min()
+            
+        case .last:
+            return dates.max()
+        }
+    }
+}
+
 
 ///Define threshold seasons like date of last spring freeze & first fall freeze. But eventually we can do any temperature
 ///threshold.
@@ -603,31 +648,6 @@ enum WeatherYearCalculator {
         return calendar
     }()
     
-    private static func referenceDate(from date: Date) -> Date? {
-        let components = calendar.dateComponents([.month, .day], from: date)
-        
-        guard let month = components.month,
-              let day = components.day else {
-            return nil
-        }
-        
-        if month == 2 && day == 29 {
-            return nil
-        }
-        
-        return calendar.date(
-            from: DateComponents(year: 2001, month: month, day: day)
-        )
-    }
-    
-    private static func referenceDayOfYear(from date: Date) -> Int? {
-        guard let referenceDate = referenceDate(from: date) else {
-            return nil
-        }
-        
-        return calendar.ordinality(of: .day, in: .year, for: referenceDate)
-    }
-    
     static func weatherYearDays(
         from observations: [ACISDailyObservation],
         selectedYear: Int,
@@ -637,7 +657,10 @@ enum WeatherYearCalculator {
         var selectedYearObservationsByDay: [Int: ACISDailyObservation] = [:]
         
         for observation in observations {
-            guard let dayOfYear = referenceDayOfYear(from: observation.date) else {
+            guard let dayOfYear = ClimateCalendar.climatologicalDayOfYear(
+                for: observation.date,
+                in: calendar.timeZone
+            ) else {
                 continue
             }
             
@@ -989,16 +1012,49 @@ enum ACISClimateService {
 
 ///Threshold calculator
 enum ACISThresholdCalculator {
+    
+    /// ACIS date-only values are parsed at midnight UTC
+    /// Every legacy calendar operation must interpret them in UTC.
+    private static let utcCalendar: Calendar = {
+        var calendar =
+            Calendar(identifier: .gregorian)
+        
+        calendar.timeZone =
+            TimeZone(secondsFromGMT: 0)
+            ?? .current
+        
+        return calendar
+    }()
+    
+    /// Projects every legacy ACIS date onto the same stable
+    /// 365-day climatological calendar.
+    private static func climatologicalDayOfYear(
+        from date: Date
+    ) -> Int? {
+        
+        guard let climateDate =
+                ClimateDate(utcDate: date
+                ) else {
+            return nil
+        }
+        
+        return ClimateCalendar
+            .climatologicalDayOfYear(
+                for: climateDate,
+                leapDayPolicy: .mapToFebruary28
+            )
+    }
+    
     static func thresholdSeason(
         from observations: [ACISDailyObservation],
         year: Int,
         threshold: Double,
-        field: ACISTemperatureField = .minimum,
-        comparison: ACISThresholdComparison = .lessThanOrEqual,
-        springEventChoice: ACISSeasonEventChoice = .last,
-        fallEventChoice: ACISSeasonEventChoice = .first
+        field: ClimateTemperatureField = .minimum,
+        comparison: ClimateThresholdComparison = .lessThanOrEqual,
+        springEventChoice: ClimateThresholdEventChoice = .last,
+        fallEventChoice: ClimateThresholdEventChoice = .first
     ) -> ACISThresholdSeason {
-        let calendar = Calendar(identifier: .gregorian)
+        let calendar = utcCalendar
         ///filters observations to temps in spring that match our threshold
         ///the number 8 is because thermal midsommar boundary is usually Aug 1.
         let springObservations = observations.filter { observation in
@@ -1041,10 +1097,10 @@ enum ACISThresholdCalculator {
         startYear: Int,
         endYear: Int,
         threshold: Double,
-        field: ACISTemperatureField = .minimum,
-        comparison: ACISThresholdComparison = .lessThanOrEqual,
-        springEventChoice: ACISSeasonEventChoice = .last,
-        fallEventChoice: ACISSeasonEventChoice = .first
+        field: ClimateTemperatureField = .minimum,
+        comparison: ClimateThresholdComparison = .lessThanOrEqual,
+        springEventChoice: ClimateThresholdEventChoice = .last,
+        fallEventChoice: ClimateThresholdEventChoice = .first
     ) -> [ACISThresholdSeason] {
         (startYear...endYear).map { year in
             thresholdSeason(
@@ -1061,10 +1117,11 @@ enum ACISThresholdCalculator {
     
     ///turns each data into day of year
     static func averageDayOfYear(from dates: [Date]) -> Double? {
-        let calendar = Calendar(identifier: .gregorian)
+       
         
-        let dayValues = dates.compactMap { date in
-            calendar.ordinality(of: .day, in: .year, for: date)
+        let dayValues =
+            dates.compactMap { date in
+                climatologicalDayOfYear(from: date)
         }
         
         guard dayValues.isEmpty == false else {
@@ -1081,11 +1138,11 @@ enum ACISThresholdCalculator {
         percentile: Double /// input the desired percentile, like 10, 50, 90.
     ) -> Double? { ///output an optional double, optional because if there are no usable dates
         ///there is no percentile to calculate.
-        let calendar = Calendar(identifier: .gregorian)
+        
         
         let sortedDayValues = dates
             .compactMap { date in
-                calendar.ordinality(of: .day, in: .year, for: date)
+               climatologicalDayOfYear(from: date)
             } ///converts each date into day of year.
         /// need a compact map because ordinality returns an optional Int. If swift cannot convert a date for some reason
         /// it skips that value
@@ -1153,34 +1210,24 @@ enum ACISThresholdCalculator {
         )
     }
     
-    static func monthDayText(fromAverageDayOfYear averageDay: Double?) -> String {
-        guard let averageDay else {
-            return "none"
-        }
-        ///rounds calendar dates. Use 2001 as a non-leap reference year.
-        let calendar = Calendar(identifier: .gregorian)
-        let roundedDay = Int(averageDay.rounded())
+    static func monthDayText(
+        fromAverageDayOfYear averageDay: Double?
+    ) -> String {
         
-        guard let date = calendar.date(
-            from: DateComponents(year: 2001, day: roundedDay)
-        ) else {
-            return "none"
-        }
-        
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        
-        return formatter.string(from: date)
+        ClimateCalendar.monthDayText(
+            fromClimatologicalDay: averageDay
+        ) ?? "none"
     }
     
     static func averageAboveThresholdSeasonLength(from seasons: [ACISThresholdSeason]) -> Double? {
-        let calendar = Calendar(identifier: .gregorian)
+        
         
         let lengths = seasons.compactMap { season -> Int? in
             guard let springEventDate = season.springEventDate,
                   let firstFallDate = season.firstFallDate,
-                  let springDay = calendar.ordinality(of: .day, in: .year, for: springEventDate),
-                  let fallDay = calendar.ordinality(of: .day, in: .year, for: firstFallDate) else {
+                  let springDay = climatologicalDayOfYear(from: springEventDate),
+                  let fallDay = climatologicalDayOfYear(from: firstFallDate)
+            else {
                 return nil
             }
             
@@ -1201,10 +1248,10 @@ enum ACISThresholdCalculator {
         startYear: Int,
         endYear: Int,
         threshold: Double,
-        field: ACISTemperatureField = .minimum,
-        comparison: ACISThresholdComparison = .lessThanOrEqual,
-        springEventChoice: ACISSeasonEventChoice = .last,
-        fallEventChoice: ACISSeasonEventChoice = .first
+        field: ClimateTemperatureField = .minimum,
+        comparison: ClimateThresholdComparison = .lessThanOrEqual,
+        springEventChoice: ClimateThresholdEventChoice = .last,
+        fallEventChoice: ClimateThresholdEventChoice = .first
     ) -> ACISThresholdSummary {
         let seasons = thresholdSeasons(
             from: observations,
