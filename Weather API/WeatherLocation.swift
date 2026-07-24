@@ -23,6 +23,7 @@ struct WeatherLocation: Identifiable, Equatable, Hashable {
     let timeZoneIdentifier: String
     let acisStationID: String
     let generatedClimateProfile: GeneratedClimateProfile?
+    let countryCode: String
     
     ///existing curated stations can still omit generatedClimateProfile, because the initializer default is nil
     ///Generated station factory can pass generatedClimateProfile: profile
@@ -38,7 +39,8 @@ struct WeatherLocation: Identifiable, Equatable, Hashable {
         climatologyProfile: ClimatologyProfile,
         timeZoneIdentifier: String,
         acisStationID: String,
-        generatedClimateProfile: GeneratedClimateProfile? = nil
+        generatedClimateProfile: GeneratedClimateProfile? = nil,
+        countryCode: String = "US"
     ) {
         self.id = id
         self.name = name
@@ -51,6 +53,7 @@ struct WeatherLocation: Identifiable, Equatable, Hashable {
         self.timeZoneIdentifier = timeZoneIdentifier
         self.acisStationID = acisStationID
         self.generatedClimateProfile = generatedClimateProfile
+        self.countryCode = countryCode.uppercased()
     }
 }
 
@@ -199,7 +202,8 @@ extension WeatherLocation {
             climatologyProfile: .northLasVegas,
             timeZoneIdentifier: savedStation.timeZoneIdentifier,
             acisStationID: savedStation.acisStationID,
-            generatedClimateProfile: savedStation.generatedClimateProfile
+            generatedClimateProfile: savedStation.generatedClimateProfile,
+            countryCode: savedStation.resolvedCountryCode
         )
     }
     

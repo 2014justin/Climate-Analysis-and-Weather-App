@@ -2077,12 +2077,17 @@ struct ContentView: View {
                 return
             }
             
+            let climateObservations =
+                ACISClimateDailyObservationAdapter
+                    .observations(from: observations)
+            
             let weatherYearDays =
-                WeatherYearCalculator.weatherYearDays(
-                    from: observations,
-                    selectedYear: currentYear,
-                    location: requestedLocation
-                )
+                ClimateWeatherYearCalculator
+                    .weatherYearDays(
+                        from: climateObservations,
+                        selectedYear: currentYear,
+                        location: requestedLocation
+                    )
             
             liveWeatherYearDays = weatherYearDays
             

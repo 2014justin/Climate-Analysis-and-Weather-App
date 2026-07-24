@@ -217,7 +217,7 @@ struct ClimateDayPoint: Identifiable {
 }
 ///1D array with 365 elements. Each row has info on dayOfYear, data, etc (11 pieces of data)
 ///makes it possible for a NOWData-style weather of the specified year grapher.
-struct WeatherYearDay: Identifiable {
+struct WeatherYearDay: Identifiable, Equatable {
     let dayOfYear: Int
     let date: Date
     
@@ -240,12 +240,6 @@ struct WeatherYearDay: Identifiable {
     }
 }
 
-struct WeatherYearRecordInfo {
-    let startDate: Date?
-    let endDate: Date?
-    let rowCount: Int
-    let representedYearCount: Int
-}
 ///Add eigendate chord logic
 struct EigendateChordResult {
     let depth: Double
@@ -314,6 +308,128 @@ struct ChartHoverOverlay: View {
                         }
                     }
             }
+        }
+    }
+}
+
+/// Reusable chart overlay supporting both ordinary hover inspection
+/// and click-drag Date-range selection.
+struct ChartDateRangeInteractionOverlay: View {
+    let proxy: ChartProxy
+    let onHover: (CGPoint) -> Void
+    let onHoverEnded: () -> Void
+    let onRangeChanged: (ClosedRange<Date>) -> Void
+    let onRangeEnded: (ClosedRange<Date>) -> Void
+    
+    var body: some View {
+        GeometryReader { geometry in
+            if let plotFrameAnchor = proxy.plotFrame {
+                let plotFrame =
+                    geometry[plotFrameAnchor]
+                
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            let plotLocation =
+                                CGPoint(
+                                    x:
+                                        location.x
+                                        - plotFrame.minX,
+                                    y:
+                                        location.y
+                                        - plotFrame.minY
+                                )
+                            
+                            guard plotFrame.contains(location) else {
+                                onHoverEnded()
+                                return
+                            }
+                            
+                            onHover(plotLocation)
+                            
+                        case .ended:
+                            onHoverEnded()
+                        }
+                    }
+                    .simultaneousGesture(
+                        DragGesture(
+                            minimumDistance: 8
+                        )
+                        .onChanged { value in
+                            guard let range =
+                                    dateRange(
+                                        from: value,
+                                        in: plotFrame
+                                    ) else {
+                                return
+                            }
+                            
+                            onRangeChanged(range)
+                        }
+                        .onEnded { value in
+                            guard let range =
+                                    dateRange(
+                                        from: value,
+                                        in: plotFrame
+                                    ) else {
+                                return
+                            }
+                            
+                            onRangeEnded(range)
+                        }
+                    )
+            }
+        }
+    }
+    
+    /// Converts drag coordinates into an ordered Date range.
+    /// The drag must begin inside the plot, but it may finish
+    /// outside—the ending position is clamped to the plot edge.
+    private func dateRange(
+        from value: DragGesture.Value,
+        in plotFrame: CGRect
+    ) -> ClosedRange<Date>? {
+        
+        guard plotFrame.contains(
+            value.startLocation
+        ) else {
+            return nil
+        }
+        
+        let startX =
+            value.startLocation.x
+            - plotFrame.minX
+        
+        let unclampedCurrentX =
+            value.location.x
+            - plotFrame.minX
+        
+        let currentX =
+            min(
+                max(unclampedCurrentX, 0),
+                plotFrame.width
+            )
+        
+        guard let startDate: Date =
+                proxy.value(
+                    atX: startX,
+                    as: Date.self
+                ),
+              let currentDate: Date =
+                proxy.value(
+                    atX: currentX,
+                    as: Date.self
+                ) else {
+            return nil
+        }
+        
+        if startDate <= currentDate {
+            return startDate...currentDate
+        } else {
+            return currentDate...startDate
         }
     }
 }

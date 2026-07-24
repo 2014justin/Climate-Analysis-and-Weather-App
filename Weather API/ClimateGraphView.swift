@@ -50,11 +50,29 @@ struct ClimateGraphView: View {
     @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
     @State private var selectedThresholdRiskPoint: ThresholdRiskChartPoint?
     @State private var selectedWeatherYearDay: WeatherYearDay?
+    
+    /// The committed date range currently visible in the Weather Year chart. nil means the
+    /// complete calendar year.
+    @State private var weatherYearZoomDomain: ClosedRange<Date>?
+    
+    /// The temporary range shown while the user is dragging.
+    @State private var weatherYearPendingZoomDomain: ClosedRange<Date>?
+    
+    @State private var isLoadingWeatherYear = false
+    @State private var weatherYearErrorMessage: String?
+    @State private var loadedWeatherYearSourceID: String?
     @State private var thresholdOutputMode = ThresholdOutputMode.graph
     @State private var thresholdObservations: [ACISDailyObservation] = []
-    @State private var selectedWeatherYear = 2026
+    @State private var weatherYearObservations: [ClimateDailyObservation] = []
+    @State private var selectedWeatherYear =
+        Calendar.current.component(
+            .year,
+            from: Date()
+        )
     @State private var weatherYearDays: [WeatherYearDay] = []
-    @State private var weatherYearRecordInfo: WeatherYearRecordInfo?
+    @State private var availableWeatherYears:
+        [Int] = []
+    @State private var weatherYearRecordInfo: ClimateWeatherYearRecordInfo?
     @State private var selectedWeatherYearOverlays: Set<WeatherYearOverlay> = [
         ///Make record low and highs avail immediately, then record high minimum and record low minimum.
         .observedRange,
@@ -471,27 +489,65 @@ struct ClimateGraphView: View {
     
     ///threshold seasons & weather for the year both use the same raw ACIS rows, but they produce different derived
     ///products. this keeps those calculations separate
-    private func recalculateWeatherYearDays(from observations: [ACISDailyObservation]? = nil) {
-        let sourceObservations = observations ?? thresholdObservations
-        ///When you switch from 2020 to 2026, we do not want the hover tooltip stuck on an old day from the
-        ///previous selected year
-        selectedWeatherYearDay = nil
+    private func recalculateWeatherYearDays(
+        from observations:
+            [ClimateDailyObservation]? = nil
+    ) {
+        let sourceObservations =
+            observations
+            ?? weatherYearObservations
         
-        guard sourceObservations.isEmpty == false else {
+        selectedWeatherYearDay = nil
+        weatherYearZoomDomain = nil
+        weatherYearPendingZoomDomain = nil
+        
+        guard sourceObservations.isEmpty
+                == false else {
             weatherYearDays = []
+            availableWeatherYears = []
             weatherYearRecordInfo = nil
             return
         }
         
-        weatherYearDays = WeatherYearCalculator.weatherYearDays(
-            from: sourceObservations,
-            selectedYear: selectedWeatherYear,
-            location: location
-        )
+        let resolvedAvailableYears =
+            ClimateWeatherYearCalculator
+                .availableYears(
+                    from: sourceObservations
+                )
         
-        weatherYearRecordInfo = WeatherYearCalculator.recordInfo(
-            from: sourceObservations
-        )
+        availableWeatherYears =
+            resolvedAvailableYears
+        
+        let resolvedSelectedYear: Int
+        
+        if resolvedAvailableYears.contains(
+            selectedWeatherYear
+        ) {
+            resolvedSelectedYear =
+                selectedWeatherYear
+        } else {
+            resolvedSelectedYear =
+                resolvedAvailableYears.first
+                ?? selectedWeatherYear
+            
+            selectedWeatherYear =
+                resolvedSelectedYear
+        }
+        
+        weatherYearDays =
+            ClimateWeatherYearCalculator
+                .weatherYearDays(
+                    from: sourceObservations,
+                    selectedYear:
+                        resolvedSelectedYear,
+                    location: location
+                )
+        
+        weatherYearRecordInfo =
+            ClimateWeatherYearCalculator
+                .recordInfo(
+                    from: sourceObservations
+                )
     }
     
     ///async means the function is allowed to pause while waiting for network data.
@@ -519,25 +575,101 @@ struct ClimateGraphView: View {
                 startDate: "1991-01-01",
                 endDate: todayString
             )
+            
+            let climateObservations =
+                ACISClimateDailyObservationAdapter
+                    .observations(from: observations)
+            
             ///recalculatethresholdsummaries turns daw daily obs into useful threshold summaries.
             thresholdObservations = observations
+            
+            weatherYearObservations = climateObservations
+            
             loadedACISStationID = location.acisStationID
+            
             let thresholdPeriodObservations = observations.filter { observation in
                 let year = Calendar.current.component(.year, from: observation.date)
                 return year >= 1991 && year <= 2020
             }
             recalculateThresholdSummaries(from: thresholdPeriodObservations)
-            recalculateWeatherYearDays(from: observations)
+            recalculateWeatherYearDays(from: climateObservations)
             thresholdSummaryErrorMessage = nil
             ///if ACIS fails, we should clear all derived ACIS products.
         } catch {
+            weatherYearObservations = []
             thresholdSummaries = []
             thresholdSummaryErrorMessage =
                 "ACIS threshold load failed: \(error.localizedDescription)"
             thresholdObservations = []
             weatherYearDays = []
             weatherYearRecordInfo = nil
+            availableWeatherYears = []
             loadedACISStationID = nil
+        }
+    }
+    
+    /// Canadian weather-year loader
+    private func loadCanadianWeatherYear() async {
+        
+        let requestedSourceID =
+            "\(location.countryCode):"
+            + location.acisStationID
+        
+        if loadedWeatherYearSourceID
+            == requestedSourceID,
+           weatherYearObservations.isEmpty
+            == false {
+            
+            recalculateWeatherYearDays()
+            return
+        }
+        
+        isLoadingWeatherYear = true
+        weatherYearErrorMessage = nil
+        
+        weatherYearObservations = []
+        weatherYearDays = []
+        availableWeatherYears = []
+        weatherYearRecordInfo = nil
+        
+        defer {
+            isLoadingWeatherYear = false
+        }
+        
+        do {
+            let observations =
+                try await
+                    ClimateWeatherYearObservationService()
+                        .fetchCanadianNormalPeriodObservations(
+                            canonicalIdentifier: location.acisStationID
+                        )
+            
+            guard Task.isCancelled
+                    == false else {
+                return
+            }
+            
+            guard observations.isEmpty == false else {
+                weatherYearErrorMessage =
+                    "ECCC returned no usable Weataher Year observations."
+                return
+            }
+            
+            weatherYearObservations = observations
+            
+            loadedWeatherYearSourceID = requestedSourceID
+            
+            recalculateWeatherYearDays(from: observations)
+        } catch {
+            weatherYearObservations = []
+            weatherYearDays = []
+            availableWeatherYears = []
+            weatherYearRecordInfo = nil
+            loadedWeatherYearSourceID = nil
+            
+            weatherYearErrorMessage =
+                "Canadian Weather Year load failed:"
+                + error.localizedDescription
         }
     }
     
@@ -582,31 +714,47 @@ struct ClimateGraphView: View {
     ///threshold seasons & weather-year both use the same ACIS daily rows, so we only fetch when the current graph actually needs ACIS data,
     ///and only if we do not already have rows for this station
     
-    private var graphNeedsACISData: Bool {
-        graphType == .thresholdSeasons || graphType == .weatherForTheYear
+    private var graphNeedsClimateSourceData:
+        Bool {
+        
+        graphType == .thresholdSeasons
+        || graphType == .weatherForTheYear
     }
     
-    private func loadACISDataIfNeeded() async {
-        guard graphNeedsACISData else {
+    private func loadClimateDataIfNeeded()
+        async {
+        
+        guard graphNeedsClimateSourceData else {
             return
         }
-        
-        /// Threshold graphs for newly-generated profiles need no
-        /// network request because their summaries are persistent (on disk).
+            
+        /// Generated profiles already persist their provider-neutral threshold summaries.
         if graphType == .thresholdSeasons,
            storedThresholdSummaries.isEmpty == false {
             
             recalculateThresholdSummaries()
             return
         }
-        
+            
+        if graphType == .weatherForTheYear,
+           location.countryCode == "CA" {
+            
+            await loadCanadianWeatherYear()
+            return
+        }
+            
+        guard location.countryCode == "US"
+        else {
+            return
+        }
+            
         guard loadedACISStationID
                 != location.acisStationID
                 || thresholdObservations.isEmpty
         else {
             return
         }
-        
+            
         await loadThresholdSummary()
     }
     
@@ -1710,7 +1858,7 @@ struct ClimateGraphView: View {
         )
         ///The next .onappear block is very important for keyboard navigation of the app
         .task(id: "\(location.acisStationID)-\(graphType.id)") {
-            await loadACISDataIfNeeded()
+            await loadClimateDataIfNeeded()
         }
         .onAppear {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -2259,11 +2407,26 @@ struct ClimateGraphView: View {
                 .labelsHidden()
                 .frame(width: 120)
             }
-
+            
+            if isLoadingWeatherYear {
+                ProgressView(
+                    "Loading Canadian daily observation..."
+                )
+            }
+            
+            if let weatherYearErrorMessage {
+                Text(weatherYearErrorMessage)
+                    .foregroundStyle(.red)
+            }
+            
             Text("Loaded \(weatherYearDays.count) weather-year days.")
 
             if let recordInfo = weatherYearRecordInfo {
-                Text("Record sample: \(recordInfo.rowCount) ACIS rows across \(recordInfo.representedYearCount) years.")
+                Text(
+                    "Source sample:"
+                    + "\(recordInfo.usableRowCount) usable daily rows "
+                    + "across \(recordInfo.representedYearCount) years."
+                )
             }
             
             HStack(spacing: 10) {
@@ -2288,7 +2451,43 @@ struct ClimateGraphView: View {
                 }
             }
             
-            
+            HStack {
+                if let weatherYearZoomDomain {
+                    Text(
+                        weatherYearZoomDomain.lowerBound.formatted(
+                            .dateTime
+                                .month(.abbreviated)
+                                .day()
+                        )
+                        + " - "
+                        + weatherYearZoomDomain.upperBound.formatted(
+                            .dateTime
+                                .month(.abbreviated)
+                                .day()
+                        )
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text("Click and drag across the chart to zoom.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                if weatherYearZoomDomain != nil {
+                    Button {
+                        resetWeatherYearZoom()
+                    } label: {
+                        Label(
+                            "Reset Zoom",
+                            systemImage: "arrow.counterclockwise"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
 
             if weatherYearDays.isEmpty {
                 Text("Weather-year data is loading...")
@@ -2302,9 +2501,117 @@ struct ClimateGraphView: View {
         }
     }
     ///year option
-    private var weatherYearOptions: [Int] {
-        let currentYear = Calendar.current.component(.year, from: Date())
-        return Array((1991...currentYear).reversed())
+    private var weatherYearOptions:
+    [Int] {
+        
+        guard availableWeatherYears.isEmpty == false else {
+            return [
+                selectedWeatherYear
+            ]
+        }
+        
+        return availableWeatherYears
+    }
+    
+    /// Complete date domain represented by the selected Weather Year.
+    private var weatherYearFullDateDomain: ClosedRange<Date> {
+        guard let firstDate = weatherYearDays.first?.date,
+              let lastDate = weatherYearDays.last?.date else {
+            
+            let start = Calendar.current.startOfDay(for: Date())
+            let end =
+                Calendar.current.date(
+                    byAdding: .day,
+                    value: 1,
+                    to: start
+                )
+                ?? start.addingTimeInterval(86_400)
+            
+            return start...end
+        }
+        
+        return firstDate...lastDate
+    }
+
+    /// The date domain currently shown by the chart.
+    private var weatherYearVisibleDateDomain: ClosedRange<Date> {
+        weatherYearZoomDomain
+            ?? weatherYearFullDateDomain
+    }
+
+    /// Only the Weather Year days presently visible on screen.
+    private var visibleWeatherYearDays: [WeatherYearDay] {
+        guard let weatherYearZoomDomain else {
+            return weatherYearDays
+        }
+        
+        return weatherYearDays.filter { day in
+            weatherYearZoomDomain.contains(day.date)
+        }
+    }
+    
+    /// Gives the observed bars more girth if it is zoomed in:
+    private var weatherYearObservedRangeGirth: CGFloat {
+        switch visibleWeatherYearDays.count {
+        case ...14:
+            return 4.00
+        case ...45:
+            return 3.20
+        case ...90:
+            return 2.40
+        case ...180:
+            return 1.80
+        default:
+            return 1.40
+        }
+    }
+    
+    /// Commits a drag selection after snapping both ends to real
+    /// Weather Year calendar dates.
+    private func commitWeatherYearZoom(
+        _ proposedRange: ClosedRange<Date>
+    ) {
+        defer {
+            weatherYearPendingZoomDomain = nil
+        }
+        
+        guard let firstDay =
+                weatherYearDay(
+                    closestTo: proposedRange.lowerBound
+                ),
+              let lastDay =
+                weatherYearDay(
+                    closestTo: proposedRange.upperBound
+                ) else {
+            return
+        }
+        
+        let lowerBound = min(firstDay.date, lastDay.date)
+        
+        let upperBound = max(firstDay.date, lastDay.date)
+        
+        let selectedDayCount =
+            Calendar.current.dateComponents(
+                [.day],
+                from: lowerBound,
+                to: upperBound
+            ).day ?? 0
+        
+        /// Prevent an ordinary click from accidentally zooming in.
+        guard selectedDayCount >= 2 else {
+            return
+        }
+        
+        weatherYearZoomDomain = lowerBound...upperBound
+        
+        selectedWeatherYearDay = nil
+    }
+    
+    /// Restores the complete Weather Year.
+    private func resetWeatherYearZoom() {
+        weatherYearZoomDomain = nil
+        weatherYearPendingZoomDomain = nil
+        selectedWeatherYearDay = nil
     }
     
     ///nearest-day helper. rounds the date is it lands on a non-integer value.
@@ -2396,8 +2703,19 @@ struct ClimateGraphView: View {
                             yStart: .value("Observed Low", minimum),
                             yEnd: .value("Observed High", maximum)
                         )
-                        .foregroundStyle(Color.blue.opacity(0.65))
-                        .lineStyle(StrokeStyle(lineWidth: 1.4))
+                        .foregroundStyle(
+                            Color.blue.opacity(
+                                weatherYearZoomDomain == nil
+                                    ? 0.65
+                                    : 0.80
+                            )
+                        )
+                        .lineStyle(
+                            StrokeStyle(
+                                lineWidth:
+                                    weatherYearObservedRangeGirth
+                            )
+                        )
                     }
                 }
             }
@@ -2455,6 +2773,21 @@ struct ClimateGraphView: View {
                         .lineStyle(StrokeStyle(lineWidth: 2))
                     }
                 }
+            }
+            
+            /// The translucent range shown while dragging.
+            if let weatherYearPendingZoomDomain {
+                RectangleMark(
+                    xStart: .value(
+                        "Zoom Start",
+                        weatherYearPendingZoomDomain.lowerBound
+                    ),
+                    xEnd: .value(
+                        "Zoom End",
+                        weatherYearPendingZoomDomain.upperBound
+                    )
+                )
+                .foregroundStyle(Color.blue.opacity(0.20))
             }
             
             ///hover mouse logic here:
@@ -2530,21 +2863,40 @@ struct ClimateGraphView: View {
         ///to select only the climate data they need, such as normal low, record warm minimum, etc.
         
         .chartOverlay { proxy in
-            ChartHoverOverlay(
+            ChartDateRangeInteractionOverlay(
                 proxy: proxy,
                 onHover: { plotLocation in
-                    guard let hoveredDate = proxy.value(atX: plotLocation.x, as: Date.self) else {
+                    guard weatherYearPendingZoomDomain == nil,
+                            let hoveredDate =
+                            proxy.value(
+                                atX: plotLocation.x,
+                                as: Date.self
+                            ) else {
                         selectedWeatherYearDay = nil
                         return
                     }
                     
-                    selectedWeatherYearDay = weatherYearDay(closestTo: hoveredDate)
+                    selectedWeatherYearDay =
+                        weatherYearDay(closestTo: hoveredDate)
                 },
-                onEnded: {
+                onHoverEnded:  {
                     selectedWeatherYearDay = nil
+                },
+                onRangeChanged: { proposedRange in
+                    selectedWeatherYearDay = nil
+                    
+                    weatherYearPendingZoomDomain =
+                        proposedRange
+                },
+                onRangeEnded: { proposedRange in
+                    commitWeatherYearZoom(proposedRange)
                 }
             )
         }
+        
+        .chartXScale(
+            domain:weatherYearVisibleDateDomain
+        )
         
         ///Chooses the correct domain.
         .chartYScale(domain: weatherYearTemperatureDomain)
@@ -2589,27 +2941,71 @@ struct ClimateGraphView: View {
         .frame(height: 480)
     }
     
-    private var weatherYearTemperatureDomain: ClosedRange<Double> {
-        let values = weatherYearDays.flatMap { day in
-            [
-                day.selectedYearMinimum,
-                day.selectedYearMaximum,
-                Optional(day.normalLow),
-                Optional(day.normalHigh),
-                day.recordLowMinimum,
-                day.recordHighMaximum,
-                day.recordWarmMinimum,
-                day.recordCoolMaximum
-            ].compactMap { $0 }
+    /// Returns only the temperatures belonging to overlays the user has enabled.
+    private func visibleWeatherYearTemperatures(
+        for day: WeatherYearDay
+    ) -> [Double] {
+        
+        var values: [Double] = []
+        
+        if selectedWeatherYearOverlays.contains(.observedRange) {
+            values.append(
+                contentsOf: [
+                    day.selectedYearMinimum,
+                    day.selectedYearMaximum
+                ].compactMap { $0 }
+            )
         }
+        
+        if selectedWeatherYearOverlays.contains(.normalRange) {
+            values.append(day.normalLow)
+            values.append(day.normalHigh)
+        }
+        
+        if selectedWeatherYearOverlays.contains(.recordLowMinimum),
+           let value = day.recordLowMinimum {
+            values.append(value)
+        }
+        
+        if selectedWeatherYearOverlays.contains(.recordHighMaximum),
+           let value = day.recordHighMaximum {
+            values.append(value)
+        }
+        
+        if selectedWeatherYearOverlays.contains(.recordWarmMinimum),
+           let value = day.recordWarmMinimum {
+            values.append(value)
+        }
+        
+        if selectedWeatherYearOverlays.contains(.recordCoolMaximum),
+           let value = day.recordCoolMaximum {
+            values.append(value)
+        }
+        
+        return values
+    }
+
+    /// Automatically rescales the y-axis using only the currently visible dates.
+    private var weatherYearTemperatureDomain: ClosedRange<Double> {
+        let values =
+            visibleWeatherYearDays.flatMap {
+                visibleWeatherYearTemperatures(for: $0)
+            }
         
         guard let minimum = values.min(),
               let maximum = values.max() else {
             return 0...120
         }
         
-        let lowerBound = floor((minimum - 0) / 10) * 10
-        let upperBound = ceil((maximum + 0) / 10) * 10
+        let lowerBound =
+            floor((minimum - 2.0) / 10.0) * 10.0
+        
+        let upperBound =
+            ceil((maximum + 2.0) / 10.0) * 10.0
+        
+        guard lowerBound < upperBound else {
+            return (lowerBound - 10.0)...(upperBound + 10.0)
+        }
         
         return lowerBound...upperBound
     }
