@@ -31,8 +31,16 @@ struct ClimateGraphView: View {
     
     private let annualTemperatureSpreadPoints: [AnnualTemperatureSpreadPoint]
     
-    ///Controls the annual temperature spread envelope. Level 2 still displays the inner ±1σ band.
-    @State private var selectedAnnualSigmaLevel = 1
+    /// Complete presentation state for the Annual Temperature Curve.
+    @State
+    private var annualTemperatureOptions =
+        AnnualTemperatureChartOptions()
+    
+    @State private var isShowingAnnualTemperatureGraphOptions = false
+    
+    /// Shared horizontal zoom state for the Annual Temperature chart.
+    @State private var annualTemperatureZoomState =
+        ClimateChartZoomState<Int>()
     
     @State private var keyMonitor: Any?
     @State private var selectedClimatePoint: ClimateDayPoint?
@@ -46,17 +54,16 @@ struct ClimateGraphView: View {
     /// loader function for climate data
     @State private var selectedThresholds: Set<Double> = [32.0]
     @State private var isShowingAdvancedThresholdPicker = false
+    @State private var isShowingThresholdHelp = false
     @State private var selectedThresholdEventMode = ThresholdEventMode.coldNights
     @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
     @State private var selectedThresholdRiskPoint: ThresholdRiskChartPoint?
     @State private var selectedWeatherYearDay: WeatherYearDay?
     
-    /// The committed date range currently visible in the Weather Year chart. nil means the
-    /// complete calendar year.
-    @State private var weatherYearZoomDomain: ClosedRange<Date>?
-    
-    /// The temporary range shown while the user is dragging.
-    @State private var weatherYearPendingZoomDomain: ClosedRange<Date>?
+    /// Shared committed and pending horizontal zoom state
+    /// for the Weather Year chart.
+    @State private var weatherYearZoomState =
+        ClimateChartZoomState<Date>()
     
     @State private var isLoadingWeatherYear = false
     @State private var weatherYearErrorMessage: String?
@@ -80,6 +87,10 @@ struct ClimateGraphView: View {
         .recordLowMinimum,
         .recordHighMaximum
     ]
+    
+    /// Controls the optional freeze reference rule in the weatherYear chart.
+    @State private var isShowingWeatherYearFreezeLine = true
+    
     ///which station the current ACIS rows belong to
     @State private var loadedACISStationID: String?
     
@@ -498,8 +509,7 @@ struct ClimateGraphView: View {
             ?? weatherYearObservations
         
         selectedWeatherYearDay = nil
-        weatherYearZoomDomain = nil
-        weatherYearPendingZoomDomain = nil
+        weatherYearZoomState.reset()
         
         guard sourceObservations.isEmpty
                 == false else {
@@ -640,7 +650,7 @@ struct ClimateGraphView: View {
             let observations =
                 try await
                     ClimateWeatherYearObservationService()
-                        .fetchCanadianNormalPeriodObservations(
+                        .fetchCanadianWeatherYearObservations(
                             canonicalIdentifier: location.acisStationID
                         )
             
@@ -699,6 +709,63 @@ struct ClimateGraphView: View {
         }
         
         graphType = ClimateGraphType.allGraphs[currentGraphIndex + 1]
+    }
+    
+    private var selectedWeatherYearObservedDays: [WeatherYearDay] {
+        
+        weatherYearDays.filter { day in
+            day.selectedYearMinimum != nil
+            || day.selectedYearMaximum != nil
+        }
+    }
+    
+    /// Automatically update when the user selects another year.
+    /// Distinguishes the 365 chart positions from the number of actual observations.
+    /// Provide the compact text needed for our new metadata toolbar.
+    /// The raw row count remains available in weatherYearRecordInfo for future
+    /// information popover.
+    
+    private var weatherYearObservationCoverageText: String {
+        
+        let observedDays =
+            selectedWeatherYearObservedDays
+        
+        guard let finalObservedDay =
+                observedDays.last else {
+            return "No observations for \(selectedWeatherYear)"
+        }
+        
+        if observedDays.count == 365 {
+            return "365 observed days"
+        }
+        
+        let finalDateText =
+            finalObservedDay.date.formatted(
+                .dateTime
+                    .month(.abbreviated)
+                    .day()
+            )
+        
+        return """
+            \(observedDays.count) observed days · through \(finalDateText)
+            """
+    }
+    
+    private var weatherYearRecordPeriodText: String? {
+        guard let recordInfo =
+                weatherYearRecordInfo,
+              let startYear =
+                recordInfo.sourceStartDate?.year,
+              let endYear =
+                recordInfo.sourceEndDate?.year else {
+            return nil
+        }
+        
+        if startYear == endYear {
+            return "Records: \(startYear)"
+        }
+        
+        return "Records: \(startYear)-\(endYear)"
     }
     
     ///toggle the weather overaly
@@ -841,39 +908,111 @@ struct ClimateGraphView: View {
         thermalWindow(threshold: 0.1, lookingForWarmWindow: false)
     }
     
+    /// Complete climatological day-of-year domain.
+    private var annualTemperatureFullDayDomain: ClosedRange<Int> {
+        1...365
+    }
+    
+    /// The day-of-year range curretnly display.
+    private var annualTemperatureVisibleDayDomain: ClosedRange<Int> {
+        annualTemperatureZoomState.resolvedDomain(
+            fullDomain: annualTemperatureFullDayDomain
+        )
+    }
+    
+    /// Normal-temperature points currently visible on screen/graph.
+    private var visibleAnnualClimatePoints: [ClimateDayPoint] {
+        climatePoints.filter { point in
+            annualTemperatureVisibleDayDomain.contains(
+                point.dayOfYear
+            )
+        }
+    }
+        
+    private var visibleAnnualTemperatureSpreadPoints:
+        [AnnualTemperatureSpreadPoint] {
+            annualTemperatureSpreadPoints.filter { point in
+                annualTemperatureVisibleDayDomain.contains(point.dayOfYear)
+            }
+    }
+    
+    /// Find the spread record for the hovered date.
+    private var selectedAnnualTemperatureSpreadPoint:
+        AnnualTemperatureSpreadPoint? {
+
+        guard let selectedClimatePoint else {
+            return nil
+        }
+
+        return annualTemperatureSpreadPoints.first { point in
+            point.dayOfYear ==
+                selectedClimatePoint.dayOfYear
+        }
+    }
+    
     ///Helps with the base 10 logic. If the annual minimum is 37, chart will start from y = 37.
     ///If it plateuas at 104 in midsommar, it will max out at 110.
-    private var annualTemperatureDomain: ClosedRange<Double> {
-        var allTemperatures = climatePoints.flatMap { point in
-            [
-                point.normalHigh,
-                point.normalLow
-            ]
-        }
+    /// Temperature domain for the currently visible dates and enabled layers.
+    private var annualTemperatureDomain:
+        ClosedRange<Double> {
         
-        let sigmaMultiplier = Double(selectedAnnualSigmaLevel)
-        
-        for point in annualTemperatureSpreadPoints {
-            if let sigma = point.lowStandardDeviation {
-                allTemperatures.append(point.normalLow - sigmaMultiplier * sigma)
-                allTemperatures.append(point.normalLow + sigmaMultiplier * sigma)
+        var visibleTemperatures =
+            visibleAnnualClimatePoints.flatMap { point in
+                [
+                    point.normalHigh,
+                    point.normalLow
+                ]
             }
+        
+        if annualTemperatureOptions.showsVariabilityBands {
+            let sigmaMultiplier =
+                annualTemperatureOptions
+                    .sigmaMultiplier
             
-            if let sigma = point.highStandardDeviation {
-                allTemperatures.append(point.normalHigh - sigmaMultiplier * sigma)
-                allTemperatures.append(point.normalHigh + sigmaMultiplier * sigma)
+            for point in
+                visibleAnnualTemperatureSpreadPoints {
+                
+                if annualTemperatureOptions
+                    .showsLowTemperatureSpread,
+                   let sigma =
+                    point.lowStandardDeviation {
+                    
+                    visibleTemperatures.append(
+                        point.normalLow
+                            - sigmaMultiplier * sigma
+                    )
+                    
+                    visibleTemperatures.append(
+                        point.normalLow
+                            + sigmaMultiplier * sigma
+                    )
+                }
+                
+                if annualTemperatureOptions
+                    .showsHighTemperatureSpread,
+                   let sigma =
+                    point.highStandardDeviation {
+                    
+                    visibleTemperatures.append(
+                        point.normalHigh
+                            - sigmaMultiplier * sigma
+                    )
+                    
+                    visibleTemperatures.append(
+                        point.normalHigh
+                            + sigmaMultiplier * sigma
+                    )
+                }
             }
         }
         
-        guard let minimumTemperature = allTemperatures.min(),
-              let maximumTemperature = allTemperatures.max() else {
-            return 0...100
-        }
-        
-        let lowerBound = floor(minimumTemperature / 10.0) * 10.0
-        let upperBound = ceil(maximumTemperature / 10.0) * 10.0
-        
-        return lowerBound...upperBound
+        return ClimateChartYDomainCalculator.domain(
+            values: visibleTemperatures,
+            roundingStep: 10.0,
+            padding: 0,
+            minimumSpan: 20.0,
+            fallback: 0...100
+        )
     }
 
     
@@ -1715,13 +1854,18 @@ struct ClimateGraphView: View {
                 
                 Spacer()
                 
-                Label(
-                    selectedThresholdEventMode.technicalLabel,
-                    systemImage: "info.circle"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help(selectedThresholdEventMode.explanation)
+                ChartsHelpInfo.Trigger(
+                    title: "How this works",
+                    detail: selectedThresholdEventMode.technicalLabel
+                ) {
+                    isShowingThresholdHelp = true
+                }
+                .help("Open the Threshold Seasons guide")
+                .sheet(
+                    isPresented: $isShowingThresholdHelp
+                ) {
+                    ChartsHelpInfo.ThresholdSeasons()
+                }
             }
             
             /// Mode picker UI
@@ -1900,22 +2044,32 @@ struct ClimateGraphView: View {
     
     ///New wrapper that allows us to see ±1σ or 2 standard deviations in the main climate annual temperature curve.
     private var annualTemperatureChart: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+        VStack(
+            alignment: .leading,
+            spacing: 8
+        ) {
+            HStack {
                 Spacer()
                 
-                Text("Temperature Spread")
-                    .font(.caption)
-                    .foregroundStyle(DashboardTheme.textSecondary)
-                
-                Picker("Temperature Spread", selection: $selectedAnnualSigmaLevel) {
-                    Text("±1σ").tag(1)
-                    Text("±2σ").tag(2)
+                Button {
+                    isShowingAnnualTemperatureGraphOptions.toggle()
+                } label: {
+                    Label(
+                        "Graph Options",
+                        systemImage: "slider.horizontal.3"
+                    )
                 }
-                .labelsHidden()
-                .pickerStyle(.radioGroup)
-                .horizontalRadioGroupLayout()
-                .fixedSize()
+                .buttonStyle(.bordered)
+                .help("Customize the Annual Temperature Curve")
+                .popover(
+                    isPresented:
+                        $isShowingAnnualTemperatureGraphOptions,
+                    arrowEdge: .top
+                ) {
+                    AnnualTemperatureGraphOptionsView(
+                        options: $annualTemperatureOptions
+                    )
+                }
             }
             
             annualTemperaturePlot
@@ -1926,58 +2080,132 @@ struct ClimateGraphView: View {
     /// under our climate UI.
     private var annualTemperaturePlot: some View {
         Chart {
-            ///Adds ±1σ and 2 sigma bands.
-            if selectedAnnualSigmaLevel == 2 {
-                ///Minimum temperatures plus minus 2 sigma.
-                ForEach(annualTemperatureSpreadPoints) { point in
-                    if let sigma = point.lowStandardDeviation {
-                        AreaMark(
-                            x: .value("Day", point.dayOfYear),
-                            yStart: .value("Tmin - 2σ", point.normalLow - 2.0 * sigma),
-                            yEnd: .value("Tmin + 2σ", point.normalLow + 2.0 * sigma),
-                            series: .value("Band", "Tmin ±2σ")
-                        )
-                        .foregroundStyle(Color.white.opacity(0.06))
+            /// Draws independently selectable Tmin and Tmax variability envelopes.
+            if annualTemperatureOptions.showsVariabilityBands {
+                
+                ///When ±2σ is selected, retain the darker inner ±1σ envelope for
+                ///visual context.
+                if annualTemperatureOptions.sigmaLevel == 2 {
+                    
+                    if annualTemperatureOptions.showsLowTemperatureSpread {
+                        
+                        ForEach(
+                            visibleAnnualTemperatureSpreadPoints
+                        ) { point in
+                            if let sigma =
+                                point.lowStandardDeviation {
+                                
+                                AreaMark(
+                                    x: .value(
+                                        "Day",
+                                        point.dayOfYear
+                                    ),
+                                    yStart: .value(
+                                        "Tmin - 2σ",
+                                        point.normalLow - 2.0 * sigma
+                                    ),
+                                    yEnd: .value(
+                                        "Tmin + 2σ",
+                                        point.normalLow + 2.0 * sigma
+                                    ),
+                                    series: .value(
+                                        "Band",
+                                        "Tmin ±2σ"
+                                    )
+                                )
+                                .foregroundStyle(Color.blue.opacity(0.055))
+                            }
+                        }
+                    }
+                    
+                    if annualTemperatureOptions.showsHighTemperatureSpread {
+                        
+                        ForEach(
+                            visibleAnnualTemperatureSpreadPoints
+                        ) { point in
+                            /// T max standard deviation
+                            if let sigma = point.highStandardDeviation {
+                                AreaMark(
+                                    x: .value(
+                                        "Day",
+                                        point.dayOfYear
+                                    ),
+                                    yStart: .value(
+                                        "Tmax - 2σ",
+                                        point.normalHigh - 2.0 * sigma
+                                    ),
+                                    yEnd: .value(
+                                        "Tmax + 2σ",
+                                        point.normalHigh + 2.0 * sigma
+                                    ),
+                                    series: .value(
+                                        "Band",
+                                        "Tmax ±2σ"
+                                    )
+                                )
+                                .foregroundStyle(Color.red.opacity(0.055))
+                            }
+                        }
                     }
                 }
                 
-                ///Maximum temperatures plus minus 2 sigma.
-                ForEach(annualTemperatureSpreadPoints) { point in
-                    if let sigma = point.highStandardDeviation {
-                        AreaMark(
-                            x: .value("Day", point.dayOfYear),
-                            yStart: .value("Tmax - 2σ", point.normalHigh - 2.0 * sigma),
-                            yEnd: .value("Tmax + 2σ", point.normalHigh + 2.0 * sigma),
-                            series: .value("Band", "Tmax ±2σ")
-                        )
-                        .foregroundStyle(Color.white.opacity(0.06))
+                /// The inner ±1σ envelopes are always shown whenever their
+                /// respective temperature is enabled.
+                if annualTemperatureOptions.showsLowTemperatureSpread {
+                    
+                    ForEach(
+                        visibleAnnualTemperatureSpreadPoints
+                    ) { point in
+                        if let sigma = point.lowStandardDeviation {
+                            AreaMark(
+                                x: .value(
+                                    "Day",
+                                    point.dayOfYear
+                                ),
+                                yStart: .value(
+                                    "Tmin - 1σ",
+                                    point.normalLow - 1.0 * sigma
+                                ),
+                                yEnd: .value(
+                                    "Tmin + 1σ",
+                                    point.normalLow + 1.0 * sigma
+                                ),
+                                series: .value(
+                                    "Band",
+                                    "Tmin ±1σ"
+                                )
+                            )
+                            .foregroundStyle(Color.blue.opacity(0.13))
+                        }
                     }
                 }
-            }
-            
-            ///T min plus minus 1 sigma
-            ForEach(annualTemperatureSpreadPoints) { point in
-                if let sigma = point.lowStandardDeviation {
-                    AreaMark(
-                        x: .value("Day", point.dayOfYear),
-                        yStart: .value("Tmin - 1σ", point.normalLow - sigma),
-                        yEnd: .value("Tmin + 1σ", point.normalLow + sigma),
-                        series: .value("Band", "Tmin ±1σ")
-                    )
-                    .foregroundStyle(Color.white.opacity(0.14))
-                }
-            }
-            
-            ///T max plus minus 1 sigma
-            ForEach(annualTemperatureSpreadPoints) { point in
-                if let sigma = point.highStandardDeviation {
-                    AreaMark(
-                        x: .value("Day", point.dayOfYear),
-                        yStart: .value("Tmax - 1σ", point.normalHigh - sigma),
-                        yEnd: .value("Tmax + 1σ", point.normalHigh + sigma),
-                        series: .value("Band", "Tmax ±1σ")
-                    )
-                    .foregroundStyle(Color.white.opacity(0.14))
+                
+                if annualTemperatureOptions.showsHighTemperatureSpread {
+                    ForEach(
+                        visibleAnnualTemperatureSpreadPoints
+                    ) { point in
+                        if let sigma = point.highStandardDeviation {
+                            AreaMark(
+                                x: .value(
+                                    "Day",
+                                    point.dayOfYear
+                                ),
+                                yStart: .value(
+                                    "Tmax - 1σ",
+                                    point.normalHigh - 1.0 * sigma
+                                ),
+                                yEnd: .value(
+                                    "Tmax + 1σ",
+                                    point.normalHigh + 1.0 * sigma
+                                ),
+                                series: .value(
+                                    "Band",
+                                    "Tmax ±1σ"
+                                )
+                            )
+                            .foregroundStyle(Color.red.opacity(0.13))
+                        }
+                    }
                 }
             }
             
@@ -2001,28 +2229,72 @@ struct ClimateGraphView: View {
             
             
             /// Upper edge of the selected Tmin envelope: unusually warm mornings.
-            ForEach(annualTemperatureSpreadPoints) { point in
-                if let sigma = point.lowStandardDeviation {
-                    LineMark(
-                        x: .value("Day", point.dayOfYear),
-                        y: .value("Warm-night boundary", point.normalLow + Double(selectedAnnualSigmaLevel) * sigma),
-                        series: .value("Boundary", "Tmin upper sigma boundary")
-                    )
-                    .foregroundStyle(DashboardTheme.observedTemperature.opacity(0.58))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0, lineCap: .round, dash: [4, 4]))
+            if annualTemperatureOptions.showsVariabilityBands,
+               annualTemperatureOptions.showsLowTemperatureSpread {
+                
+                ForEach(
+                    visibleAnnualTemperatureSpreadPoints
+                ) { point in
+                    if let sigma = point.lowStandardDeviation {
+                        
+                        LineMark(
+                            x: .value(
+                                "Day",
+                                point.dayOfYear
+                            ),
+                            y: .value(
+                                "Warm-night boundary",
+                                point.normalLow + annualTemperatureOptions.sigmaMultiplier * sigma
+                            ),
+                            series: .value(
+                                "Boundary",
+                                "Tmin upper sigma boundary"
+                            )
+                        )
+                        .foregroundStyle(Color.blue.opacity(0.62))
+                        .lineStyle(
+                            StrokeStyle(
+                                lineWidth: 1,
+                                lineCap: .round,
+                                dash: [4,4]
+                            )
+                        )
+                    }
                 }
             }
-
-            /// Lower edge of the selected Tmax envelope: unusually cool afternoons.
-            ForEach(annualTemperatureSpreadPoints) { point in
-                if let sigma = point.highStandardDeviation {
-                    LineMark(
-                        x: .value("Day", point.dayOfYear),
-                        y: .value("Cool-afternoon boundary", point.normalHigh - Double(selectedAnnualSigmaLevel) * sigma),
-                        series: .value("Boundary", "Tmax lower sigma boundary")
-                    )
-                    .foregroundStyle(Color.red.opacity(0.58))
-                    .lineStyle(StrokeStyle(lineWidth: 1.0, lineCap: .round, dash: [4, 4]))
+            
+            /// Variability bands for Tmax
+            if annualTemperatureOptions.showsVariabilityBands,
+               annualTemperatureOptions.showsHighTemperatureSpread {
+                
+                ForEach(
+                    visibleAnnualTemperatureSpreadPoints
+                ) { point in
+                    if let sigma = point.highStandardDeviation {
+                        
+                        LineMark(
+                            x: .value(
+                                "Day",
+                                point.dayOfYear
+                            ),
+                            y: .value(
+                                "Cool-afternoon boundary",
+                                point.normalHigh - annualTemperatureOptions.sigmaMultiplier * sigma
+                            ),
+                            series: .value(
+                                "Boundary",
+                                "Tmax lower sigma boundary"
+                            )
+                        )
+                        .foregroundStyle(Color.red.opacity(0.62))
+                        .lineStyle(
+                            StrokeStyle(
+                                lineWidth: 1,
+                                lineCap: .round,
+                                dash: [4,4]
+                            )
+                        )
+                    }
                 }
             }
             
@@ -2077,10 +2349,75 @@ struct ClimateGraphView: View {
                         
                         Divider()
                         
-                        Text("Normal High: \(selectedClimatePoint.normalHigh, specifier: "%.1f") °F")
-                        Text("Normal Low: \(selectedClimatePoint.normalLow, specifier: "%.1f") °F")
-                        Text("Solar: \(selectedClimatePoint.solarEnergy, specifier: "%.2f") kWh/m²/day")
-                        Text("s(t): \(selectedClimatePoint.normalizedSolar, specifier: "%.3f")")
+                        ///Show the normal high/low and their respective sigma (std dev) in the hovertool.
+                        Text(
+                            "Normal High: \(selectedClimatePoint.normalHigh, specifier: "%.1f") °F"
+                        )
+
+                        if annualTemperatureOptions
+                            .showsStandardDeviationInHover,
+                           let sigma =
+                            selectedAnnualTemperatureSpreadPoint?
+                                .highStandardDeviation {
+
+                            let multiplier =
+                                annualTemperatureOptions.sigmaMultiplier
+
+                            let lowerBoundary =
+                                selectedClimatePoint.normalHigh
+                                    - multiplier * sigma
+
+                            let upperBoundary =
+                                selectedClimatePoint.normalHigh
+                                    + multiplier * sigma
+
+                            Text(
+                                "Tmax ±\(annualTemperatureOptions.sigmaLevel)σ: \(lowerBoundary, specifier: "%.1f")–\(upperBoundary, specifier: "%.1f") °F  (σmax: \(sigma, specifier: "%.1f") °F)"
+                            )
+                            .foregroundStyle(.red.opacity(0.9))
+                        }
+
+                        Text(
+                            "Normal Low: \(selectedClimatePoint.normalLow, specifier: "%.1f") °F"
+                        )
+
+                        if annualTemperatureOptions
+                            .showsStandardDeviationInHover,
+                           let sigma =
+                            selectedAnnualTemperatureSpreadPoint?
+                                .lowStandardDeviation {
+
+                            let multiplier =
+                                annualTemperatureOptions.sigmaMultiplier
+
+                            let lowerBoundary =
+                                selectedClimatePoint.normalLow
+                                    - multiplier * sigma
+
+                            let upperBoundary =
+                                selectedClimatePoint.normalLow
+                                    + multiplier * sigma
+
+                            Text(
+                                "Tmin ±\(annualTemperatureOptions.sigmaLevel)σ: \(lowerBoundary, specifier: "%.1f")–\(upperBoundary, specifier: "%.1f") °F  (σmin: \(sigma, specifier: "%.1f") °F)"
+                            )
+                            .foregroundStyle(.blue.opacity(0.9))
+                        }
+                        if annualTemperatureOptions
+                            .showsSolarInsolationInHover {
+
+                            Text(
+                                "Solar: \(selectedClimatePoint.solarEnergy, specifier: "%.2f") kWh/m²/day"
+                            )
+                        }
+
+                        if annualTemperatureOptions
+                            .showsNormalizedSolarInHover {
+
+                            Text(
+                                "s(t): \(selectedClimatePoint.normalizedSolar, specifier: "%.3f")"
+                            )
+                        }
                     }
                     .font(.callout)
                     .foregroundStyle(.white)
@@ -2091,7 +2428,9 @@ struct ClimateGraphView: View {
             }
             
             ///Thermal midwinter & thermal midsommar
-            if let peakNormalLowPoint,
+            if annualTemperatureOptions
+                .showsThermalTimingSummary,
+               let peakNormalLowPoint,
                let thermalMidsommarWindow,
                let thermalMidwinterWindow {
                 PointMark(
@@ -2124,7 +2463,7 @@ struct ClimateGraphView: View {
         }
         .dashboardClimatePlotStyle()
         .chartLegend(.hidden)
-        .chartXScale(domain: 1...365)
+        .chartXScale(domain: annualTemperatureVisibleDayDomain)
         .chartYScale(domain: annualTemperatureDomain)
         ///Add the cursor hover logic. Renders an invisible rectangle. Calls our complicated hover function from earlier
         ///but do not have to build it here so it saves space.
@@ -2393,74 +2732,280 @@ struct ClimateGraphView: View {
     ///weather for the year
     private var weatherForTheYearPlaceholder: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Weather for the Year")
-                .font(.headline)
-            HStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
                 Text("Year")
+                    .font(.subheadline)
                     .fontWeight(.semibold)
                 
-                Picker("Year", selection: $selectedWeatherYear) {
-                    ForEach(weatherYearOptions, id: \.self) { year in
-                        Text(String(year)).tag(year)
+                Picker(
+                    "Year",
+                    selection: $selectedWeatherYear
+                ) {
+                    ForEach(
+                        weatherYearOptions,
+                        id: \.self
+                    ) { year in
+                        Text(String(year))
                     }
                 }
                 .labelsHidden()
                 .frame(width: 120)
-            }
-            
-            if isLoadingWeatherYear {
-                ProgressView(
-                    "Loading Canadian daily observation..."
-                )
+                .monospacedDigit()
+                
+                Divider()
+                    .frame(height: 24)
+                
+                if isLoadingWeatherYear == true {
+                    ProgressView()
+                        .controlSize(.small)
+                    
+                    Text("Loading observations...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label(
+                        weatherYearObservationCoverageText,
+                        systemImage: "calendar"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    
+                    if let weatherYearRecordPeriodText {
+                        Text("•")
+                            .foregroundStyle(.tertiary)
+                        
+                        Text(weatherYearRecordPeriodText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                
+                Spacer()
             }
             
             if let weatherYearErrorMessage {
-                Text(weatherYearErrorMessage)
-                    .foregroundStyle(.red)
-            }
-            
-            Text("Loaded \(weatherYearDays.count) weather-year days.")
-
-            if let recordInfo = weatherYearRecordInfo {
-                Text(
-                    "Source sample:"
-                    + "\(recordInfo.usableRowCount) usable daily rows "
-                    + "across \(recordInfo.representedYearCount) years."
+                Label(
+                    weatherYearErrorMessage,
+                    systemImage: "exclamationmark.triangle.fill"
                 )
+                .font(.subheadline)
+                .foregroundStyle(.red)
             }
             
-            HStack(spacing: 10) {
-                Text("Overlays")
-                    .fontWeight(.semibold)
+            HStack(spacing: 8) {
                 
-                ForEach(WeatherYearOverlay.allCases) { overlay in
-                    let isSelected = selectedWeatherYearOverlays.contains(overlay)
-                    
+
+                ForEach(
+                    WeatherYearOverlay.allCases
+                ) { overlay in
+                    let isSelected =
+                        selectedWeatherYearOverlays
+                            .contains(overlay)
+
                     Button {
-                        toggleWeatherYearOverlay(overlay)
+                        toggleWeatherYearOverlay(
+                            overlay
+                        )
                     } label: {
-                        Text(overlay.title)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(isSelected ? Color.blue.opacity(0.45) : Color.gray.opacity(0.22))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        HStack(spacing: 7) {
+                            RoundedRectangle(
+                                cornerRadius: 2,
+                                style: .continuous
+                            )
+                            .fill(
+                                overlay.color.opacity(
+                                    isSelected ? 0.55 : 0.16
+                                )
+                            )
+                            .overlay {
+                                RoundedRectangle(
+                                    cornerRadius: 2,
+                                    style: .continuous
+                                )
+                                .stroke(
+                                    overlay.color.opacity(
+                                        isSelected ? 0.95 : 0.32
+                                    ),
+                                    lineWidth: 1
+                                )
+                            }
+                            .frame(
+                                width: 22,
+                                height: 10
+                            )
+                            .frame(
+                                width: 24,
+                                height: 12
+                            )
+
+                            Text(overlay.title)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.820)
+                                .foregroundStyle(
+                                    isSelected
+                                        ? Color.primary
+                                        : Color.secondary
+                                )
+                        }
+                        
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background {
+                            RoundedRectangle(
+                                cornerRadius: 8,
+                                style: .continuous
+                            )
+                            .fill(
+                                overlay.color.opacity(
+                                    isSelected
+                                        ? 0.14
+                                        : 0.035
+                                )
+                            )
+                        }
+                        .overlay {
+                            RoundedRectangle(
+                                cornerRadius: 8,
+                                style: .continuous
+                            )
+                            .stroke(
+                                overlay.color.opacity(
+                                    isSelected
+                                        ? 0.70
+                                        : 0.18
+                                ),
+                                lineWidth:
+                                    isSelected
+                                        ? 1.0
+                                        : 0.75
+                            )
+                        }
+                        .contentShape(
+                            RoundedRectangle(
+                                cornerRadius: 8,
+                                style: .continuous
+                            )
+                        )
                     }
                     .buttonStyle(.plain)
+                    .help(overlay.helpText)
+                    .accessibilityValue(
+                        isSelected
+                            ? "Shown"
+                            : "Hidden"
+                    )
+                    .animation(
+                        .easeInOut(duration: 0.15),
+                        value: isSelected
+                    )
                 }
+
+                Divider()
+                    .frame(height: 26)
+                    .padding(.horizontal, 2)
+
+                Button {
+                    isShowingWeatherYearFreezeLine.toggle()
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "snowflake")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(
+                                Color.cyan.opacity(
+                                    isShowingWeatherYearFreezeLine
+                                        ? 1.0
+                                        : 0.30
+                                )
+                            )
+
+                        Text("32°F Line")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .lineLimit(1)
+                            .fixedSize(
+                                horizontal: true,
+                                vertical: false
+                            )
+                            .foregroundStyle(
+                                isShowingWeatherYearFreezeLine
+                                    ? Color.primary
+                                    : Color.secondary
+                            )
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .background {
+                        RoundedRectangle(
+                            cornerRadius: 8,
+                            style: .continuous
+                        )
+                        .fill(
+                            Color.cyan.opacity(
+                                isShowingWeatherYearFreezeLine
+                                    ? 0.12
+                                    : 0.035
+                            )
+                        )
+                    }
+                    .overlay {
+                        RoundedRectangle(
+                            cornerRadius: 8,
+                            style: .continuous
+                        )
+                        .stroke(
+                            Color.cyan.opacity(
+                                isShowingWeatherYearFreezeLine
+                                    ? 0.65
+                                    : 0.18
+                            ),
+                            lineWidth:
+                                isShowingWeatherYearFreezeLine
+                                    ? 1.0
+                                    : 0.75
+                        )
+                    }
+                    .contentShape(
+                        RoundedRectangle(
+                            cornerRadius: 8,
+                            style: .continuous
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(
+                    "Show or hide the 32°F freezing reference line."
+                )
+                .accessibilityValue(
+                    isShowingWeatherYearFreezeLine
+                        ? "Shown"
+                        : "Hidden"
+                )
+                .animation(
+                    .easeInOut(duration: 0.15),
+                    value: isShowingWeatherYearFreezeLine
+                )
+
             }
+            .frame(
+                maxWidth: .infinity,
+                alignment: .leading
+            )
             
             HStack {
-                if let weatherYearZoomDomain {
+                if let zoomDomain = weatherYearZoomState.committedDomain {
                     Text(
-                        weatherYearZoomDomain.lowerBound.formatted(
+                        zoomDomain.lowerBound.formatted(
                             .dateTime
                                 .month(.abbreviated)
                                 .day()
                         )
                         + " - "
-                        + weatherYearZoomDomain.upperBound.formatted(
+                        + zoomDomain.upperBound.formatted(
                             .dateTime
                                 .month(.abbreviated)
                                 .day()
@@ -2476,7 +3021,7 @@ struct ClimateGraphView: View {
                 
                 Spacer()
                 
-                if weatherYearZoomDomain != nil {
+                if weatherYearZoomState.isZoomed {
                     Button {
                         resetWeatherYearZoom()
                     } label: {
@@ -2535,18 +3080,20 @@ struct ClimateGraphView: View {
 
     /// The date domain currently shown by the chart.
     private var weatherYearVisibleDateDomain: ClosedRange<Date> {
-        weatherYearZoomDomain
-            ?? weatherYearFullDateDomain
+        weatherYearZoomState.resolvedDomain(
+            fullDomain: weatherYearFullDateDomain
+        )
     }
 
     /// Only the Weather Year days presently visible on screen.
     private var visibleWeatherYearDays: [WeatherYearDay] {
-        guard let weatherYearZoomDomain else {
+        guard let zoomDomain =
+            weatherYearZoomState.committedDomain else {
             return weatherYearDays
         }
-        
+
         return weatherYearDays.filter { day in
-            weatherYearZoomDomain.contains(day.date)
+            zoomDomain.contains(day.date)
         }
     }
     
@@ -2572,7 +3119,7 @@ struct ClimateGraphView: View {
         _ proposedRange: ClosedRange<Date>
     ) {
         defer {
-            weatherYearPendingZoomDomain = nil
+            weatherYearZoomState.clearPending()
         }
         
         guard let firstDay =
@@ -2602,15 +3149,14 @@ struct ClimateGraphView: View {
             return
         }
         
-        weatherYearZoomDomain = lowerBound...upperBound
+        weatherYearZoomState.commit(lowerBound...upperBound)
         
         selectedWeatherYearDay = nil
     }
     
     /// Restores the complete Weather Year.
     private func resetWeatherYearZoom() {
-        weatherYearZoomDomain = nil
-        weatherYearPendingZoomDomain = nil
+        weatherYearZoomState.reset()
         selectedWeatherYearDay = nil
     }
     
@@ -2671,6 +3217,25 @@ struct ClimateGraphView: View {
                 .foregroundStyle(DashboardTheme.chartGridMajor)
                 .lineStyle(StrokeStyle(lineWidth: 0.65))
             }
+            
+            if isShowingWeatherYearFreezeLine {
+                RuleMark(
+                    y: .value(
+                        "Freezing point",
+                        32.0
+                    )
+                )
+                .foregroundStyle(Color.cyan.opacity(0.42))
+                .lineStyle(
+                    StrokeStyle(
+                        lineWidth: 1.2,
+                        dash: [7,5]
+                    )
+                )
+                .accessibilityLabel(
+                    "32 degree freezing line"
+                )
+            }
 
             /// Monthly guides drawn above the normal-range fill.
             ForEach(
@@ -2705,9 +3270,9 @@ struct ClimateGraphView: View {
                         )
                         .foregroundStyle(
                             Color.blue.opacity(
-                                weatherYearZoomDomain == nil
-                                    ? 0.65
-                                    : 0.80
+                                weatherYearZoomState.isZoomed
+                                    ? 0.80
+                                    : 0.65
                             )
                         )
                         .lineStyle(
@@ -2776,15 +3341,15 @@ struct ClimateGraphView: View {
             }
             
             /// The translucent range shown while dragging.
-            if let weatherYearPendingZoomDomain {
+            if let pendingDomain = weatherYearZoomState.pendingDomain {
                 RectangleMark(
                     xStart: .value(
                         "Zoom Start",
-                        weatherYearPendingZoomDomain.lowerBound
+                        pendingDomain.lowerBound
                     ),
                     xEnd: .value(
                         "Zoom End",
-                        weatherYearPendingZoomDomain.upperBound
+                        pendingDomain.upperBound
                     )
                 )
                 .foregroundStyle(Color.blue.opacity(0.20))
@@ -2863,10 +3428,11 @@ struct ClimateGraphView: View {
         ///to select only the climate data they need, such as normal low, record warm minimum, etc.
         
         .chartOverlay { proxy in
-            ChartDateRangeInteractionOverlay(
+            ClimateChartRangeInteractionOverlay(
                 proxy: proxy,
+                xValueType: Date.self,
                 onHover: { plotLocation in
-                    guard weatherYearPendingZoomDomain == nil,
+                    guard weatherYearZoomState.pendingDomain == nil,
                             let hoveredDate =
                             proxy.value(
                                 atX: plotLocation.x,
@@ -2885,8 +3451,7 @@ struct ClimateGraphView: View {
                 onRangeChanged: { proposedRange in
                     selectedWeatherYearDay = nil
                     
-                    weatherYearPendingZoomDomain =
-                        proposedRange
+                    weatherYearZoomState.updatePending(proposedRange)
                 },
                 onRangeEnded: { proposedRange in
                     commitWeatherYearZoom(proposedRange)
@@ -2985,29 +3550,24 @@ struct ClimateGraphView: View {
         return values
     }
 
-    /// Automatically rescales the y-axis using only the currently visible dates.
+    /// Automatically rescales the y-axis using only the currently
+    /// visible dates and enabled overlays.
     private var weatherYearTemperatureDomain: ClosedRange<Double> {
-        let values =
-            visibleWeatherYearDays.flatMap {
-                visibleWeatherYearTemperatures(for: $0)
+        
+        let visibleValues =
+            visibleWeatherYearDays.flatMap { day in
+             visibleWeatherYearTemperatures(for: day)
             }
         
-        guard let minimum = values.min(),
-              let maximum = values.max() else {
-            return 0...120
-        }
         
-        let lowerBound =
-            floor((minimum - 2.0) / 10.0) * 10.0
-        
-        let upperBound =
-            ceil((maximum + 2.0) / 10.0) * 10.0
-        
-        guard lowerBound < upperBound else {
-            return (lowerBound - 10.0)...(upperBound + 10.0)
-        }
-        
-        return lowerBound...upperBound
+        return ClimateChartYDomainCalculator
+            .domain(
+                values: visibleValues,
+                roundingStep: 10.0,
+                padding: 0.0,
+                minimumSpan: 20.0,
+                fallback: 0.0...120.0
+            )
     }
 }
 

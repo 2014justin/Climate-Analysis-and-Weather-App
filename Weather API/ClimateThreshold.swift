@@ -1,56 +1,86 @@
-/// Provider-agnostic threshold system. Works for the following thresholds of interest
-///---------------
-/// Last Daily Minima ("morning lows") below threshold:
-/// LAST SPRING DATE: The spring date (up to Jul 31) by which in 50% of years subsequent mornings will remain above
-/// the threshold temperature in question. The most important one is the last spring freeze. The calculator also
-/// works for last spring morning of 40 F or  below, for example
+/// Provider-agnostic temperature-threshold machinery.
 ///
-/// FIRST FALL DATE: The fall date (Aug 1 onwards) by which in 50% of years, the daily minima will have reached
-/// that value by then. In other words, 50% of a morning this cold by this date. The most important is first fall freeze.
-/// It also works for other thresholds like 28 or 36.
+/// There are four thermal-event families. Each family has a spring
+/// boundary and a fall boundary, giving us eight possible scenarios.
 ///
-///----------------
-/// First Daily Minima ("morning lows") above threshold:
-/// FIRST SPRING DATE: The spring date (up to Jul 31) by which in 50% of years, there will be a morning at least this warm.
-/// For example, one threshold of interest for especially cold climates might be the median date of the first spring morning
-/// at or above the freezing mark (32 F). This is NOT the avg last freeze, it is simply the avg first occurance
-/// of a 'balmy' morning
+/// Every complete year contributes one qualifying event date. We then
+/// calculate percentiles across those annual dates. Therefore, the 50%
+/// date is the median event date—not the average, not a forecast, and
+/// definitely not a promise from the atmosphere. Weather will continue
+/// doing whatever the hell it wants in an individual year.
 ///
-/// LAST FALL DATE:
-/// The fall date (Aug 1 -> Dec 31) by which in 50% of years, mornings will generally fail to maintain this threshold value
-/// of warmth. For example, Fairbanks AK the 50% date for 32 F in the fall is Oct 7. This means after Oct 7, the qualifying
-/// warm morning has already occurred in 50% years.
+/// SPRING RISK:
+/// The displayed percentage is the historical chance that the selected
+/// spring event still occurs after the indicated date.
 ///
-///-------------------
-/// First Daily Maximum ("afternoon high") above threshold:
-/// FIRST SPRING DATE: The spring date (up to Jul 31) by which, in a median year, the location will experience an afternoon
-/// temperature at or above this temperature. This is important for cold continental climates, where the first 50 deg F
-/// afternoon is an event. Fairbanks AK usually will have a 50 degree day by April 5. This does not mean 50 deg F
-/// afternoons are 'locked-in' yet.
+/// FALL RISK:
+/// The displayed percentage is the historical chance that the selected
+/// fall event has already occurred before the indicated date.
 ///
-/// LAST FALL DATE: The fall date (Aug 1 -> Dec 31) by which, in a median year, the location will fail to break the high
-/// temperature in question. For example, in 50% of years, 50 deg F afternoons in Fairbanks are DONE by October 5
-/// until the following spring.
+/// ----------------------------------------------------------------------
+/// COLD NIGHTS — Tmin ≤ threshold
 ///
-///------------
-/// Daily Maximum ("afternoon high") 'lock-in' temperature:
-/// FIRST SPRING DATE: The spring date (up to Jul 31) by which, in a median year, the location will continually exceed the
-/// afternoon temperature in question. It is a true sign of summer's advance because after this date, afternoons make it
-/// to at least this warm. For example, the 50% date for 50 deg F lock-in afternoons for Fairbanks AK is approximately
-/// May 5. This means, in a median year, every afternoon after May 5 should make it to at least 50 deg F until
-/// intense fall cooling hits.
+/// SPRING — Last cold morning:
+/// The final spring morning on which Tmin reaches or falls below the
+/// selected threshold. At 32°F, this is the traditional last spring
+/// freeze. At 28°F, it describes the end of hard freezes. At 40°F, it
+/// answers the equally legitimate question, “When are mornings in the
+/// thirties finally done ambushing my plants?”
 ///
-/// LAST FALL DATE: The fall date (Aug 1 -> Dec 31) by which, in a median year, the location's 'warm afternoon'
-/// lock-in threshold will expire. It is a sign of winter knocking because after this dates, afternoons are NOT
-/// guaranteed to make it at least this warm. For example, the 50% date for 50 deg in Fairbanks AK is
-/// Sep 16. This means after Sep 16, the frequency of afternoons making or exceeding 50 F gets exceedingly
-/// rare until winter takes a firm grasp.
+/// FALL — First cold morning:
+/// The first fall morning on which Tmin reaches or falls below the
+/// threshold. At 32°F, this is the first fall freeze. Other thresholds
+/// describe the return of progressively more serious cold.
 ///
-/// For a 50 F afternoon lock-in:
-/// field = .maximum
-/// springEventChoice = .last
-/// fallEventChoice = .first
-/// comparison = .lessThan
+/// ----------------------------------------------------------------------
+/// MILD NIGHT ONSET — Tmin ≥ threshold
+///
+/// SPRING — First mild morning:
+/// The first spring morning whose minimum reaches or exceeds the selected
+/// threshold. This is spring knocking on the door. It does NOT mean the
+/// last freeze has passed. Winter may still answer the door with violence.
+///
+/// FALL — Last mild morning:
+/// The final fall morning whose minimum reaches or exceeds the threshold.
+/// This marks the seasonal departure of nights that remain unusually mild.
+///
+/// ----------------------------------------------------------------------
+/// WARM AFTERNOONS — Tmax ≥ threshold
+///
+/// SPRING — First warm afternoon:
+/// The first spring afternoon whose maximum reaches or exceeds the
+/// threshold. In Fairbanks, the first 50°F afternoon is a real event and
+/// should be treated with the appropriate amount of emotional investment.
+///
+/// One warm afternoon does not mean warmth is established. It is a first
+/// occurrence, not a lock-in. The distinction matters.
+///
+/// FALL — Last warm afternoon:
+/// The final fall afternoon whose maximum reaches or exceeds the threshold.
+/// This describes the last qualifying warm day of each historical year.
+///
+/// ----------------------------------------------------------------------
+/// WARM AFTERNOON LOCK-IN — Tmax < threshold
+///
+/// SPRING — Last failure to reach the threshold:
+/// The final spring afternoon whose maximum remains below the selected
+/// threshold. After this boundary, every afternoon in that year's
+/// uninterrupted lock-in interval reaches at least that temperature.
+///
+/// This is the “okay, summer actually means business now” boundary.
+///
+/// FALL — First failure to reach the threshold:
+/// The first fall afternoon whose maximum remains below the threshold,
+/// ending the uninterrupted warm-afternoon season.
+///
+/// Warm afternoons may return afterward. Summer is allowed to stage a
+/// comeback. The point is that the continuous streak has been broken.
+///
+/// This family deliberately uses a strict “less than” comparison. If Tmax
+/// equals the threshold exactly, that afternoon successfully reached it.
+/// Cold Nights instead uses “less than or equal,” so Tmin = 32°F counts
+/// as a freezing morning. Weather enjoys exploiting definitions, so the
+/// definitions need to be exact.
 
 import Foundation
 

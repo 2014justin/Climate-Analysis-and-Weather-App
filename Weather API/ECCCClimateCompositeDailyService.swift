@@ -140,20 +140,35 @@ struct ECCCClimateCompositeDailyService {
         endDate: ClimateDate
     ) -> [ECCCClimateCompositeDailyRequest] {
         
-        thread.segments
+        /// Completed historical segments remain strictly bounded to their
+        /// official contribution periods. Only the last station in each
+        /// Tmin/Tmax thread may continue past 2020.
+        let orderedSegments = thread.segments
             .sorted {
                 $0.sequence < $1.sequence
             }
-            .compactMap { segment in
+        
+        return orderedSegments
+            .enumerated()
+            .compactMap { index, segment in
+                let isFinalSegment =
+                    index == orderedSegments.count - 1
+                
                 let requestStartDate = max(
                     startDate,
                     segment.normalStartDate
                 )
                 
-                let requestEndDate = min(
-                    endDate,
-                    segment.normalEndDate
-                )
+                let requestEndDate: ClimateDate
+                
+                if isFinalSegment {
+                    requestEndDate = endDate
+                } else {
+                    requestEndDate = min(
+                        endDate,
+                        segment.normalEndDate
+                    )
+                }
                 
                 guard requestStartDate
                         <= requestEndDate else {
@@ -161,7 +176,8 @@ struct ECCCClimateCompositeDailyService {
                 }
                 
                 return ECCCClimateCompositeDailyRequest(
-                    climateIdentifier: segment.climateIdentifier,
+                    climateIdentifier:
+                        segment.climateIdentifier,
                     startDate: requestStartDate,
                     endDate: requestEndDate
                 )

@@ -256,6 +256,8 @@ enum ClimateWeatherYearObservationServiceError:
     
     case canadianCompositeNotFound(String)
     
+    case currentDateUnavailable
+    
     var errorDescription: String? {
         switch self {
         case .canadianCompositeNotFound(
@@ -265,6 +267,14 @@ enum ClimateWeatherYearObservationServiceError:
                 No official ECCC climate composite \
                 was found for \(identifier).
                 """
+            
+        case .currentDateUnavailable:
+            return """
+                The current calendar date could not \
+                be resolved for the Canadian Weather Year request.
+                """
+            
+            
         }
     }
 }
@@ -295,9 +305,14 @@ struct ClimateWeatherYearObservationService {
             canadianDailyService
     }
     
-    func fetchCanadianNormalPeriodObservations(
+    func fetchCanadianWeatherYearObservations(
         canonicalIdentifier: String
     ) async throws -> [ClimateDailyObservation] {
+        
+        guard let currentUTCDate =
+                ClimateDate(utcDate: Date()) else {
+            throw ClimateWeatherYearObservationServiceError.currentDateUnavailable
+        }
         
         guard let composite =
                 try canadianCatalogService
@@ -316,11 +331,8 @@ struct ClimateWeatherYearObservationService {
                     month: 1,
                     day: 1
                 ),
-                endDate: ClimateDate(
-                    year: 2020,
-                    month: 12,
-                    day: 31
-                )
+                endDate: currentUTCDate
+                
             )
     }
 }

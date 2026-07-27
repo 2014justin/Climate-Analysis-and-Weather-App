@@ -1,6 +1,244 @@
 import SwiftUI
 import Charts
 
+/// Adds options for the Annual Temperature graph
+struct AnnualTemperatureChartOptions {
+    
+    /// Master visibility switch for both variability envelopes.
+    var showsVariabilityBands = true
+    
+    /// Number of std dev displayed (z-value):
+    var sigmaLevel = 1
+    
+    /// Independently controls Tmax variability
+    var showsHighTemperatureSpread = true
+    
+    /// Independent control of Tmin visibility
+    var showsLowTemperatureSpread = true
+    
+    /// Shows the selected Tmin and Tmax variability ranges in the hover annotation.
+    var showsStandardDeviationInHover = true
+    
+    /// Shows abs daily solar insolation S(t)
+    var showsSolarInsolationInHover = true
+    
+    /// Shows normalized solar insolation s(t). ranges from 0 to 1.
+    var showsNormalizedSolarInHover = true
+    
+    /// Shows the persistent midsommar and midwinter summary.
+    var showsThermalTimingSummary = true
+    
+    var sigmaMultiplier: Double {
+        Double(sigmaLevel)
+    }
+}
+
+/// Polished controls for the Annual Temperature Curve.
+///
+/// Kept outside ClimateGraphView so the main chartdoes not become responsible
+/// for constructing its own settings UI.
+struct AnnualTemperatureGraphOptionsView: View {
+    
+    @Binding
+    var options: AnnualTemperatureChartOptions
+    
+    var body: some View {
+        VStack(
+            alignment: .leading,
+            spacing: 11
+        ) {
+            HStack(spacing: 11) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.title2)
+                    .foregroundStyle(DashboardTheme.observedTemperature)
+                
+                VStack(
+                    alignment: .leading,
+                    spacing: 2
+                ) {
+                    Text("Graph Options")
+                        .font(.headline)
+                        .foregroundStyle(DashboardTheme.textPrimary)
+                    
+                    Text("Annual Temperature Curve")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                
+                Spacer()
+            }
+            
+            Divider()
+            
+            VStack(
+                alignment: .leading,
+                spacing: 12
+            ) {
+                Toggle(
+                    "Show variability bands",
+                    isOn: $options.showsVariabilityBands
+                )
+                .toggleStyle(.switch)
+                
+                HStack {
+                    Text("Band magnitude")
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                    
+                    Spacer()
+                    
+                    Picker(
+                        "Band Magnitude",
+                        selection: $options.sigmaLevel
+                    ) {
+                        Text("±1σ")
+                            .tag(1)
+                        
+                        Text("±2σ")
+                            .tag(2)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 130)
+                }
+                
+                VStack(
+                    alignment: .leading,
+                    spacing: 9
+                ) {
+                    Text("Displayed envelopes")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                    
+                    Toggle(
+                        isOn: $options.showsHighTemperatureSpread
+                    ) {
+                        Label {
+                            Text("Tmax variability")
+                        } icon: {
+                            Image(systemName: "circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    
+                    Toggle(
+                        isOn: $options.showsLowTemperatureSpread
+                    ) {
+                        Label {
+                            Text("Tmin variability")
+                        } icon: {
+                            Image(systemName: "circle.fill")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                }
+            }
+            .padding(11)
+            .background(DashboardTheme.panel)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+                .stroke(
+                    DashboardTheme.border,
+                    lineWidth: 1
+                )
+            }
+            
+            VStack(
+                alignment: .leading,
+                spacing: 10
+            ) {
+                Text("Hover details")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                
+                Toggle(
+                    "Temperature variability, σ",
+                    isOn:
+                        $options.showsStandardDeviationInHover
+                )
+                .toggleStyle(.checkbox)
+                
+                Toggle(
+                    "Solar insolation, S(t)",
+                    isOn: $options.showsSolarInsolationInHover
+                )
+                .toggleStyle(.checkbox)
+                
+                Toggle(
+                    "Normalized solar, s(t)",
+                    isOn: $options.showsNormalizedSolarInHover
+                )
+                .toggleStyle(.checkbox)
+            }
+            .padding(11)
+            .background(DashboardTheme.panel)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+                .stroke(
+                    DashboardTheme.border,
+                    lineWidth: 1
+                )
+            }
+            
+            VStack(
+                alignment: .leading,
+                spacing: 10
+            ) {
+                Text("Annotations")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                
+                Toggle(
+                    "Thermal midsommar and midwinter",
+                    isOn: $options.showsThermalTimingSummary
+                )
+                .toggleStyle(.checkbox)
+            }
+            .padding(11)
+            .background(DashboardTheme.panel)
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+                .stroke(
+                    DashboardTheme.border,
+                    lineWidth: 1
+                )
+            }
+            
+        }
+        .padding(14)
+        .frame(width: 350)
+        .background(DashboardTheme.panelElevated)
+    }
+}
+
 ///threshold risk season. gives us exactly two valid modes: Spring risk and fall risk.
 enum ThresholdRiskSeason: String, CaseIterable, Identifiable {
     case spring
@@ -194,6 +432,68 @@ enum WeatherYearOverlay: String, CaseIterable, Identifiable {
             return "Record Cool High"
         }
     }
+    
+    var color: Color {
+        switch self {
+        case .observedRange:
+            return .blue
+            
+        case .normalRange:
+            return .yellow
+            
+        case .recordLowMinimum:
+            return .cyan
+            
+        case .recordHighMaximum:
+            return .red
+            
+        case .recordWarmMinimum:
+            return .orange
+            
+        case .recordCoolMaximum:
+            return .pink
+        }
+    }
+    
+    var isRangeOverlay: Bool {
+        switch self {
+        case .observedRange, .normalRange:
+            return true
+            
+        case .recordLowMinimum, .recordHighMaximum,
+                .recordWarmMinimum, .recordCoolMaximum:
+            return false
+        }
+    }
+    
+    var helpText: String {
+        switch self {
+        case.observedRange:
+            return "Observed daily minimum-to-maximum temperature range."
+            
+        case .normalRange:
+            return "The climatological normal daily temperature range."
+            
+        case .recordLowMinimum:
+            return "Lowest minimum temperature observed on each calendar day."
+            
+        case .recordHighMaximum:
+            return "Highest maximum temperature observed on each calendar day."
+            
+        case .recordWarmMinimum:
+            return """
+                Warmest minimum temperature observed on each calendar day. Record warm
+                minima ('morning lows') are arguably a stronger measure of heat stress than record high
+                maxima.
+                """
+            
+        case .recordCoolMaximum:
+            return """
+                Coolest maximum temperature observed on each calendar day.
+                Informally, this is the coolest possible afternoon for a date.
+                """
+        }
+    }
 }
 
 ///the points themselves
@@ -312,124 +612,4 @@ struct ChartHoverOverlay: View {
     }
 }
 
-/// Reusable chart overlay supporting both ordinary hover inspection
-/// and click-drag Date-range selection.
-struct ChartDateRangeInteractionOverlay: View {
-    let proxy: ChartProxy
-    let onHover: (CGPoint) -> Void
-    let onHoverEnded: () -> Void
-    let onRangeChanged: (ClosedRange<Date>) -> Void
-    let onRangeEnded: (ClosedRange<Date>) -> Void
-    
-    var body: some View {
-        GeometryReader { geometry in
-            if let plotFrameAnchor = proxy.plotFrame {
-                let plotFrame =
-                    geometry[plotFrameAnchor]
-                
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            let plotLocation =
-                                CGPoint(
-                                    x:
-                                        location.x
-                                        - plotFrame.minX,
-                                    y:
-                                        location.y
-                                        - plotFrame.minY
-                                )
-                            
-                            guard plotFrame.contains(location) else {
-                                onHoverEnded()
-                                return
-                            }
-                            
-                            onHover(plotLocation)
-                            
-                        case .ended:
-                            onHoverEnded()
-                        }
-                    }
-                    .simultaneousGesture(
-                        DragGesture(
-                            minimumDistance: 8
-                        )
-                        .onChanged { value in
-                            guard let range =
-                                    dateRange(
-                                        from: value,
-                                        in: plotFrame
-                                    ) else {
-                                return
-                            }
-                            
-                            onRangeChanged(range)
-                        }
-                        .onEnded { value in
-                            guard let range =
-                                    dateRange(
-                                        from: value,
-                                        in: plotFrame
-                                    ) else {
-                                return
-                            }
-                            
-                            onRangeEnded(range)
-                        }
-                    )
-            }
-        }
-    }
-    
-    /// Converts drag coordinates into an ordered Date range.
-    /// The drag must begin inside the plot, but it may finish
-    /// outside—the ending position is clamped to the plot edge.
-    private func dateRange(
-        from value: DragGesture.Value,
-        in plotFrame: CGRect
-    ) -> ClosedRange<Date>? {
-        
-        guard plotFrame.contains(
-            value.startLocation
-        ) else {
-            return nil
-        }
-        
-        let startX =
-            value.startLocation.x
-            - plotFrame.minX
-        
-        let unclampedCurrentX =
-            value.location.x
-            - plotFrame.minX
-        
-        let currentX =
-            min(
-                max(unclampedCurrentX, 0),
-                plotFrame.width
-            )
-        
-        guard let startDate: Date =
-                proxy.value(
-                    atX: startX,
-                    as: Date.self
-                ),
-              let currentDate: Date =
-                proxy.value(
-                    atX: currentX,
-                    as: Date.self
-                ) else {
-            return nil
-        }
-        
-        if startDate <= currentDate {
-            return startDate...currentDate
-        } else {
-            return currentDate...startDate
-        }
-    }
-}
+
