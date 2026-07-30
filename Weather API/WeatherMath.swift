@@ -7,6 +7,24 @@ enum WeatherMath {
         return (celsius * 9.0 / 5.0) + 32.0
     }
     
+    static func fahrenheitToCelsius(
+        _ fahrenheit: Double
+    ) -> Double {
+        return (fahrenheit - 32.0) * 5.0 / 9.0
+    }
+
+    static func kelvinToCelsius(
+        _ kelvin: Double
+    ) -> Double {
+        return kelvin - 273.15
+    }
+
+    static func celsiusToKelvin(
+        _ celsius: Double
+    ) -> Double {
+        return celsius + 273.15
+    }
+    
     /// Derives rel humidity from temperature and dew point. We can take the dew point and temperature from the atlas observations,
     /// calculate the rel humidity, and then pass it into our WeatherMath.heatIndex
     
@@ -15,10 +33,11 @@ enum WeatherMath {
         dewPointFahrenheit: Double
     ) -> Double {
         let temperatureCelsius =
-            (temperatureFahrenheit - 32.0) * 5.0 / 9.0
+            fahrenheitToCelsius(temperatureFahrenheit)
         
         let dewPointCelsius =
-            (dewPointFahrenheit - 32.0) * 5.0 / 9.0
+            fahrenheitToCelsius(dewPointFahrenheit)
+        
         
         let relativeHumidity = 100.0 * exp(
             (17.625 * dewPointCelsius) / (243.04 + dewPointCelsius)
@@ -76,6 +95,87 @@ enum WeatherMath {
         }
         
         return sqrt(sqDev / Double(values.count - 1))
+    }
+    
+    /// Calculates centered rolling averages for indexed values.
+    ///
+    /// The function knows nothing about ACIS, ECCC, temperatures,
+    /// or calendar dates. A caller may optionally provide a cycle
+    /// length when the indices belong to a repeating domain such
+    /// as the 365-day climatological year.
+    static func centeredRollingAverage(
+        valuesByIndex: [Int: Double],
+        centeredAt centerIndices: [Int],
+        radius: Int,
+        minimumSampleCount: Int,
+        cycleLength: Int? = nil
+    ) -> [Int: Double] {
+        
+        guard radius >= 0,
+              minimumSampleCount > 0 else {
+            return [:]
+        }
+        
+        let maximumSampleCount =
+            (radius * 2) + 1
+        
+        let requiredSampleCount =
+            min(
+                minimumSampleCount,
+                maximumSampleCount
+            )
+        
+        return centerIndices.reduce(
+            into: [Int: Double]()
+        ) { result, centerIndex in
+            
+            let samples =
+                (-radius...radius).compactMap {
+                    offset -> Double? in
+                    
+                    let candidateIndex =
+                        centerIndex + offset
+                    
+                    let resolvedIndex: Int
+                    
+                    if let cycleLength,
+                       cycleLength > 0 {
+                        
+                        resolvedIndex =
+                            (
+                                (
+                                    candidateIndex - 1
+                                )
+                                % cycleLength
+                                + cycleLength
+                            )
+                            % cycleLength
+                            + 1
+                    } else {
+                        resolvedIndex =
+                            candidateIndex
+                    }
+                    
+                    guard let value =
+                            valuesByIndex[
+                                resolvedIndex
+                            ],
+                          value.isFinite else {
+                        return nil
+                    }
+                    
+                    return value
+                }
+            
+            guard samples.count
+                    >= requiredSampleCount else {
+                return
+            }
+            
+            result[centerIndex] =
+                samples.reduce(0.0, +)
+                / Double(samples.count)
+        }
     }
     
     /// Calculates percentile for threshold seasons.

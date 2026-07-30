@@ -6,6 +6,10 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C0EFCAF23017DBDF00EE495D /* LaTeXSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = C0EFCAF13017DBDF00EE495D /* LaTeXSwiftUI */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* Weather API.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Weather API.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -27,6 +31,7 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				C0EFCAF23017DBDF00EE495D /* LaTeXSwiftUI in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -67,6 +72,9 @@
 				C0741CDC300D5A1C0083F40A /* Tools */,
 			);
 			name = "Weather API";
+			packageProductDependencies = (
+				C0EFCAF13017DBDF00EE495D /* LaTeXSwiftUI */,
+			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Weather API.app */;
 			productType = "com.apple.product-type.application";
@@ -95,6 +103,9 @@
 			);
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C0EFCAF03017DBDF00EE495D /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */,
+			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
@@ -370,6 +381,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C0EFCAF03017DBDF00EE495D /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/colinc86/LaTeXSwiftUI";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C0EFCAF13017DBDF00EE495D /* LaTeXSwiftUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0EFCAF03017DBDF00EE495D /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */;
+			productName = LaTeXSwiftUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000000 /* Project object */;
 }

@@ -305,14 +305,12 @@ struct ClimateWeatherYearObservationService {
             canadianDailyService
     }
     
+    /// function overload
     func fetchCanadianWeatherYearObservations(
-        canonicalIdentifier: String
+        canonicalIdentifier: String,
+        startDate: ClimateDate,
+        endDate: ClimateDate
     ) async throws -> [ClimateDailyObservation] {
-        
-        guard let currentUTCDate =
-                ClimateDate(utcDate: Date()) else {
-            throw ClimateWeatherYearObservationServiceError.currentDateUnavailable
-        }
         
         guard let composite =
                 try canadianCatalogService
@@ -320,19 +318,31 @@ struct ClimateWeatherYearObservationService {
                         withCanonicalIdentifier: canonicalIdentifier
                     ) else {
             throw ClimateWeatherYearObservationServiceError
-                .canadianCompositeNotFound(canonicalIdentifier)
+                    .canadianCompositeNotFound(canonicalIdentifier)
         }
         
         return try await canadianDailyService
             .fetchObservations(
                 for: composite,
-                startDate: ClimateDate(
-                    year: 1991,
-                    month: 1,
-                    day: 1
-                ),
-                endDate: currentUTCDate
-                
+                startDate: startDate,
+                endDate: endDate
             )
+    }
+    
+    func fetchCanadianWeatherYearObservations(
+        canonicalIdentifier: String
+    ) async throws -> [ClimateDailyObservation] {
+        
+        guard let currentUTCDate =
+                ClimateDate(utcDate: Date()) else {
+            throw ClimateWeatherYearObservationServiceError
+                .currentDateUnavailable
+        }
+        
+        return try await
+            fetchCanadianWeatherYearObservations(
+                canonicalIdentifier: canonicalIdentifier,
+                startDate: ClimateDate(year: 1991, month: 1, day: 1),
+                endDate: currentUTCDate)
     }
 }

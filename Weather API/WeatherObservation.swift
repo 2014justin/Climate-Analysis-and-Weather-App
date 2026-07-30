@@ -106,11 +106,14 @@ struct NWSHourlyForecastResponse: Decodable {
 }
 
 struct NWSHourlyForecastProperties: Decodable {
+    let generatedAt: Date?
+    let updateTime: Date?
     let periods: [NWSForecastPeriod]
 }
 
 struct NWSForecastPeriod: Decodable {
     let startTime: Date
+    let endTime: Date?
     let temperature: Double
     let temperatureUnit: String
     let windSpeed: String

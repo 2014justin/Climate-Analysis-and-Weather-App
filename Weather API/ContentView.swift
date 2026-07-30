@@ -1142,57 +1142,81 @@ struct ContentView: View {
     
     private var smoothedLiveSeasonalPhasePoints: [SeasonalPhasePoint] {
         let observedPoints = liveSeasonalPhasePoints
-        
+
         let observedMinimums = Dictionary(
-            uniqueKeysWithValues: observedPoints.map {
-                ($0.dayOfYear, $0.minimumTemperature)
-            }
+            uniqueKeysWithValues:
+                observedPoints.map {
+                    (
+                        $0.dayOfYear,
+                        $0.minimumTemperature
+                    )
+                }
         )
-        
-        let forecastMinimums = forecastDailyMinimumsByDayOfYear
-        
-        ///creates a new dictionary containing entries from both dictionaries. the closure is needed in case both
-        ///dictionaries contain the same day. The underscore means swift passes the existing observed value here,
-        ///but we intentionally do not need to name or use it.
-        let combinedMinimums = observedMinimums.merging(forecastMinimums) {
-            _, forecastValue in forecastValue
-        }
-        
-        let latestObservedDay = observedPoints.map(\.dayOfYear).max()
-        
-        /// .compactMap transforms each input into a new value, discards any transformation that returns nil.
-        
-        return observedPoints.compactMap { point in
-            if point.dayOfYear == latestObservedDay {
-                let hasFiveForecastDays = (1...5).allSatisfy { offset in
-                    let day = wrappedClimateDay(point.dayOfYear + offset)
-                    return forecastMinimums[day] != nil
-                }
-                
-                guard hasFiveForecastDays else {
-                    return nil
-                }
+
+        let forecastMinimums =
+            forecastDailyMinimumsByDayOfYear
+
+        let combinedMinimums =
+            observedMinimums.merging(
+                forecastMinimums
+            ) {
+                _,
+                forecastValue in
+
+                forecastValue
             }
-            
-            /// From -5 to 5 because we do a 5-day rolling average. compactMap discards days whose temperature is unavailable.
-            let temperatures = (-5...5).compactMap { offset in
-                let day = wrappedClimateDay(point.dayOfYear + offset)
-                return combinedMinimums[day]
+
+        let latestObservedDay =
+            observedPoints
+                .map(\.dayOfYear)
+                .max()
+
+        let centerDays =
+            observedPoints.compactMap {
+                point -> Int? in
+
+                if point.dayOfYear == latestObservedDay {
+                    let hasFiveForecastDays =
+                        (1...5).allSatisfy {
+                            offset in
+
+                            let day =
+                                wrappedClimateDay(
+                                    point.dayOfYear + offset
+                                )
+
+                            return forecastMinimums[day] != nil
+                        }
+
+                    guard hasFiveForecastDays else {
+                        return nil
+                    }
+                }
+
+                return point.dayOfYear
             }
-            
-            ///Needs at least 7 usable values, so 3 days before, 3 days after, and the center day.
-            guard temperatures.count >= 7 else {
+
+        let rollingMinimums =
+            WeatherMath.centeredRollingAverage(
+                valuesByIndex: combinedMinimums,
+                centeredAt: centerDays,
+                radius: 5,
+                minimumSampleCount: 7,
+                cycleLength: 365
+            )
+
+        return observedPoints.compactMap {
+            point in
+
+            guard let rollingMinimum =
+                    rollingMinimums[point.dayOfYear] else {
                 return nil
             }
-            
-            ///Adds the temperatures and divides by how many.
-            let average = temperatures.reduce(0,+) / Double(temperatures.count)
-            
-            /// return the raw Tmin with the local moving average.
+
             return SeasonalPhasePoint(
                 dayOfYear: point.dayOfYear,
                 normalizedSolar: point.normalizedSolar,
-                minimumTemperature: average
+                minimumTemperature: rollingMinimum
             )
         }
     }
@@ -2061,25 +2085,48 @@ struct ContentView: View {
         liveSeasonalPhaseStatus = "Loading \(currentYear) daily minima"
         
         do {
-            let observations =
-                try await ACISClimateService
-                    .fetchDailyObservations(
-                        stationID: requestedLocation.acisStationID,
-                        startDate: startDate,
-                        endDate: endDate
-                    )
+            let climateObservations: [ClimateDailyObservation]
             
-            /// Ignore a result if the user selected another location whilst this request was running.
+            switch requestedLocation.countryCode {
+            case "CA":
+                climateObservations =
+                    try await
+                        ClimateWeatherYearObservationService()
+                            .fetchCanadianWeatherYearObservations(
+                                canonicalIdentifier: requestedLocation.acisStationID,
+                                startDate: ClimateDate(year: currentYear, month: 1, day: 1),
+                                endDate: ClimateDate(year: currentYear, month: currentMonth, day: currentDay)
+                            )
+                
+            case "US":
+                let observations =
+                    try await ACISClimateService
+                        .fetchDailyObservations(
+                            stationID: requestedLocation.acisStationID,
+                            startDate: startDate,
+                            endDate: endDate
+                        )
+                
+                climateObservations =
+                    ACISClimateDailyObservationAdapter
+                        .observations(from: observations)
+                
+            default :
+                liveSeasonalPhaseStatus =
+                "Current-year climate data is unsupported for this country"
+                + requestedLocation.countryCode
+                + " stations."
+                
+                return
+            }
+            
+            /// Ignore results if the user changed stations while loading.
             guard
                 Task.isCancelled == false,
                 selectedLocation.id == requestedLocation.id
             else {
                 return
             }
-            
-            let climateObservations =
-                ACISClimateDailyObservationAdapter
-                    .observations(from: observations)
             
             let weatherYearDays =
                 ClimateWeatherYearCalculator
@@ -3419,10 +3466,27 @@ struct ContentView: View {
                 stationID: selectedLocation.observationStationID,
                 hours: selectedHistoryDuration.rawValue
             )
-            let forecast = try? await service.fetchHourlyForecast(
-                latitude: selectedLocation.latitude,
-                longitude: selectedLocation.longitude
-            )
+            let forecast: Forecast?
+            let forecastFailureDescription: String?
+            
+            do {
+                forecast = try await WeatherForecastRouter()
+                    .forecast(
+                        for: ForecastRequest(
+                            latitude: selectedLocation.latitude,
+                            longitude: selectedLocation.longitude,
+                            timeZoneIdentifier: selectedLocation.timeZoneIdentifier,
+                            countryCode: selectedLocation.countryCode,
+                            stationIdentifier: selectedLocation.observationStationID
+                        )
+                    )
+                
+                forecastFailureDescription = nil
+            } catch {
+                forecast = nil
+                forecastFailureDescription = error.localizedDescription
+            }
+            
             let fetchDuration = fetchStart.duration(to: clock.now)
             
             let fetchSeconds =
@@ -3468,41 +3532,9 @@ struct ContentView: View {
             .sorted {
                 $0.timestamp < $1.timestamp
             }
-            let forecastEndDate = Date().addingTimeInterval(
-                Double(selectedHistoryDuration.rawValue) * 60 * 60
-            )
-            
-            temperatureForecast = forecast?.properties.periods.compactMap { period in
-                guard period.startTime <= forecastEndDate else {
-                    return nil
-                }
-                ///Dew point might return nil due to station error
-                let forecastDewPointFahrenheit: Double?
-
-                if let dewPointCelsius = period.dewpoint?.value {
-                    forecastDewPointFahrenheit = WeatherMath.celsiusToFahrenheit(dewPointCelsius)
-                } else {
-                    forecastDewPointFahrenheit = nil
-                }
-                
-                let forecastHeatIndexFahrenheit: Double?
-                
-                if let relativeHumidity = period.relativeHumidity?.value {
-                    forecastHeatIndexFahrenheit = WeatherMath.heatIndexFahrenheit(
-                        temperature: period.temperature,
-                        relativeHumidity: relativeHumidity
-                    )
-                } else {
-                    forecastHeatIndexFahrenheit = nil
-                }
-
-                return TemperaturePoint(
-                    timestamp: period.startTime,
-                    temperatureFahrenheit: period.temperature,
-                    dewPointFahrenheit: forecastDewPointFahrenheit,
-                    heatIndexFahrenheit: forecastHeatIndexFahrenheit
-                )
-            } ?? []
+            temperatureForecast =
+                DashboardForecastAdapter
+                    .temperaturePoints(from: forecast)
             
             if let latestObservation = response.features.first(
                 where: { observation in
@@ -3549,7 +3581,9 @@ struct ContentView: View {
                    observedCondition.isEmpty == false {
                     displayCondition = observedCondition
                 } else {
-                    displayCondition = forecast?.properties.periods.first?.shortForecast ?? "Unknown"
+                    displayCondition =
+                        DashboardForecastAdapter
+                            .firstConditionText(from: forecast) ?? "Unknown"
                 }
                 observation = WeatherObservation(
                     stationID: selectedLocation.displayStationID,
@@ -3573,7 +3607,20 @@ struct ContentView: View {
                 let formattedFetchSeconds = fetchSeconds.formatted(.number.precision(.fractionLength(2))
                 )
                 
-                networkStatus = "Weather updated successfully in \(formattedFetchSeconds) seconds. \(temperatureHistory.count) graph points loaded. \(forecast?.properties.periods.count ?? 0) forecast hours loaded."
+                let forecastStatusText: String
+                
+                if let forecastFailureDescription {
+                    forecastStatusText =
+                        "Forecast unavailable: \(forecastFailureDescription)"
+                } else {
+                    forecastStatusText =
+                    "\(forecast?.samples.count ?? 0) forecast hours loaded."
+                }
+                
+                networkStatus =
+                    "Weather updated successfully in \(formattedFetchSeconds) seconds. " +
+                    "\(temperatureHistory.count) graph points loaded. " +
+                    forecastStatusText
             } else {
                 observation = WeatherObservation(
                     stationID: selectedLocation.displayStationID,

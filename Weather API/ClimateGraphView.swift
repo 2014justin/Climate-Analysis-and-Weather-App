@@ -38,6 +38,7 @@ struct ClimateGraphView: View {
     
     @State private var isShowingAnnualTemperatureGraphOptions = false
     
+    
     /// Shared horizontal zoom state for the Annual Temperature chart.
     @State private var annualTemperatureZoomState =
         ClimateChartZoomState<Int>()
@@ -54,7 +55,7 @@ struct ClimateGraphView: View {
     /// loader function for climate data
     @State private var selectedThresholds: Set<Double> = [32.0]
     @State private var isShowingAdvancedThresholdPicker = false
-    @State private var isShowingThresholdHelp = false
+    @State private var isShowingChartHelp = false
     @State private var selectedThresholdEventMode = ThresholdEventMode.coldNights
     @State private var selectedThresholdRiskSeason = ThresholdRiskSeason.spring
     @State private var selectedThresholdRiskPoint: ThresholdRiskChartPoint?
@@ -1102,6 +1103,35 @@ struct ClimateGraphView: View {
         return abs(area)
     }
     
+    /// Dimensionless seasonal-memory area normalized by the annual
+    /// fitted normal-low temperature range.
+    private var relativeSeasonalMemoryIndex: Double? {
+        let normalLowValues = climatePoints.map { point in
+            point.normalLow
+        }
+        
+        guard let minimumNormalLow = normalLowValues.min(),
+              let maximumNormalLow = normalLowValues.max() else {
+            return nil
+        }
+        
+        let annualNormalLowRange =
+            maximumNormalLow - minimumNormalLow
+        
+        guard annualNormalLowRange > 0.0000001 else {
+            return nil
+        }
+        
+        let result =
+            seasonalMemoryIndex / annualNormalLowRange
+        
+        guard result.isFinite == true else {
+            return nil
+        }
+        
+        return result
+    }
+    
     ///Show the maximum eigendate chord from the code.
     private var maximumEigendateChord: EigendateChordResult? {
         guard let solarMaximumPoint = climatePoints.max(by: { first, second in
@@ -1845,28 +1875,6 @@ struct ClimateGraphView: View {
     
     private var thresholdSeasonsChart: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Text(
-                    "\(location.acisStationID) · \(thresholdSourcePeriodText)"
-                )
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                
-                Spacer()
-                
-                ChartsHelpInfo.Trigger(
-                    title: "How this works",
-                    detail: selectedThresholdEventMode.technicalLabel
-                ) {
-                    isShowingThresholdHelp = true
-                }
-                .help("Open the Threshold Seasons guide")
-                .sheet(
-                    isPresented: $isShowingThresholdHelp
-                ) {
-                    ChartsHelpInfo.ThresholdSeasons()
-                }
-            }
             
             /// Mode picker UI
             HStack(spacing: 8) {
@@ -1947,6 +1955,103 @@ struct ClimateGraphView: View {
         
     }
     
+    /// Add the help description and destination
+    private var chartHelpDetail: String? {
+        switch graphType {
+        case .annualTemperatureCurve:
+            return "Normals · σ · timing"
+            
+        case .seasonalHysteresisCurve:
+            return "Phase lag · eigendates · SMI"
+            
+        case .thresholdSeasons:
+            return selectedThresholdEventMode.technicalLabel
+            
+        case .weatherForTheYear:
+            return nil
+        }
+    }
+    
+    @ViewBuilder
+    private var activeChartHelpSheet: some View {
+        switch graphType {
+        case .annualTemperatureCurve:
+            ChartsHelpInfo.AnnualTemperatureCurve()
+            
+        case .seasonalHysteresisCurve:
+            ChartsHelpInfo.SeasonalHysteresis()
+            
+        case .thresholdSeasons:
+            ChartsHelpInfo.ThresholdSeasons()
+            
+        case .weatherForTheYear:
+            EmptyView()
+        }
+    }
+    
+    /// Shared toolbar
+    private var chartToolbar: some View {
+        HStack(spacing: 10) {
+            switch graphType {
+            case .thresholdSeasons:
+                Text(
+                    "\(location.acisStationID) · \(thresholdSourcePeriodText)"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                
+            case .seasonalHysteresisCurve:
+                Toggle(
+                    "Show Current Weather Year",
+                    isOn: $isShowingCurrentWeather
+                )
+                .toggleStyle(.checkbox)
+                .tint(DashboardTheme.observedTemperature)
+                
+            case .annualTemperatureCurve,
+                    .weatherForTheYear:
+                EmptyView()
+            }
+            
+            Spacer()
+            
+            if graphType == .annualTemperatureCurve {
+                Button {
+                    isShowingAnnualTemperatureGraphOptions.toggle()
+                } label: {
+                    Label(
+                        "Graph Options",
+                        systemImage: "slider.horizontal.3"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .help("Customize the Annual Temperature Curve")
+                .popover(
+                    isPresented: $isShowingAnnualTemperatureGraphOptions,
+                    arrowEdge: .top
+                ) {
+                    AnnualTemperatureGraphOptionsView(
+                        options: $annualTemperatureOptions
+                    )
+                }
+            }
+            
+            if let chartHelpDetail {
+                ChartsHelpInfo.Trigger(
+                    title: "Read the graph",
+                    detail: chartHelpDetail
+                ) {
+                    isShowingChartHelp = true
+                }
+                
+                .help("Open the scientific guide for this graph.")
+                .sheet(isPresented: $isShowingChartHelp) {
+                    activeChartHelpSheet
+                }
+            }
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -1977,6 +2082,8 @@ struct ClimateGraphView: View {
             }
             
             Divider()
+            
+            chartToolbar
             
             switch graphType {
             case .annualTemperatureCurve:
@@ -2044,36 +2151,7 @@ struct ClimateGraphView: View {
     
     ///New wrapper that allows us to see ±1σ or 2 standard deviations in the main climate annual temperature curve.
     private var annualTemperatureChart: some View {
-        VStack(
-            alignment: .leading,
-            spacing: 8
-        ) {
-            HStack {
-                Spacer()
-                
-                Button {
-                    isShowingAnnualTemperatureGraphOptions.toggle()
-                } label: {
-                    Label(
-                        "Graph Options",
-                        systemImage: "slider.horizontal.3"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .help("Customize the Annual Temperature Curve")
-                .popover(
-                    isPresented:
-                        $isShowingAnnualTemperatureGraphOptions,
-                    arrowEdge: .top
-                ) {
-                    AnnualTemperatureGraphOptionsView(
-                        options: $annualTemperatureOptions
-                    )
-                }
-            }
-            
-            annualTemperaturePlot
-        }
+        annualTemperaturePlot
     }
     
     /// This function actually plots the T min and T max for a climate site and graphs it
@@ -2527,13 +2605,7 @@ struct ClimateGraphView: View {
     }
     
     private var seasonalHysteresisChart: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("Show Current Weather Year", isOn: $isShowingCurrentWeather)
-                .toggleStyle(.checkbox)
-                .tint(DashboardTheme.observedTemperature)
-            
-            seasonalHysteresisPlot
-        }
+        seasonalHysteresisPlot
     }
     
     /// Add the seasonal hysteresis phase space with arrow seasonal progression
@@ -2640,6 +2712,15 @@ struct ClimateGraphView: View {
                         .font(.title3)
                         .fontWeight(.bold)
                     
+                    if let relativeSeasonalMemoryIndex {
+                        Text(
+                            "RSMI = \(relativeSeasonalMemoryIndex, specifier: "%.3f") (\(relativeSeasonalMemoryIndex * 100.0, specifier: "%.1f")%)"
+                        )
+                        .font(.body)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                    }
+                    
                     Text("∮ Tₘᵢₙ ds")
                         .font(.body)
                         .foregroundStyle(.secondary)
@@ -2720,10 +2801,38 @@ struct ClimateGraphView: View {
         }
         /// Make it so that the Y axis goes from base 10 below the minimum temp and above the max temp.
         .chartYAxis {
-            AxisMarks(values: .stride(by: 10))
+            AxisMarks(
+                position: .trailing,
+                values: .stride(by: 10)
+            ) { _ in
+                AxisGridLine(
+                    stroke: StrokeStyle(
+                        lineWidth: 0.7
+                    )
+                )
+                .foregroundStyle(Color.white.opacity(0.08))
+                
+                AxisTick()
+                    .foregroundStyle(Color.white.opacity(0.24))
+                
+                AxisValueLabel()
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
         }
         .chartXAxis {
-            AxisMarks(values: Array(stride(from: 0.0, through: 1.0, by: 0.2)))
+            AxisMarks(
+                values: Array(stride(from: 0.00, through: 1.00, by: 0.20))
+            ) { _ in
+                AxisGridLine(
+                    stroke: StrokeStyle(lineWidth: 0.7)
+                )
+                .foregroundStyle(Color.white.opacity(0.07))
+                
+                AxisTick()
+                    .foregroundStyle(Color.white.opacity(0.24))
+                AxisValueLabel()
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
         }
         
         .chartXAxisLabel("Normalized Solar")

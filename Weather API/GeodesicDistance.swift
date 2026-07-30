@@ -6,7 +6,7 @@
 ///
 import Foundation
 
-struct GeographicCoordinate: Codable, Equatable, Hashable, Sendable {
+nonisolated struct GeographicCoordinate: Codable, Equatable, Hashable, Sendable {
     
     let latitude: Double
     let longitude: Double
@@ -19,7 +19,7 @@ struct GeographicCoordinate: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-enum GeodesicDistance {
+nonisolated enum GeodesicDistance {
     private static let earthRadiusMiles = 3_958.8
     
     private static let earthRadiusKilometers = 6_371.0
