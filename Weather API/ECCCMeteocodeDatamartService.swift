@@ -29,6 +29,11 @@ nonisolated enum ECCCMeteocodeDatamartServiceError: LocalizedError, Sendable {
         url: URL,
         statusCode: Int
     )
+    case bulletinCodeMismatch(
+        expected: String,
+        actual: String,
+        url: URL
+    )
     case emptyRegionCatalog
     
     var errorDescription: String? {
@@ -80,6 +85,16 @@ nonisolated enum ECCCMeteocodeDatamartServiceError: LocalizedError, Sendable {
                 ECCC returned HTTP \(statusCode) for Meteocode \
                 document \(url.lastPathComponent).
                 """
+        
+        case .bulletinCodeMismatch(
+            let expected,
+            let actual,
+            let url
+        ):
+            return """
+            ECCC Meteocode document \(url.lastPathComponent) was listed as bulletin \
+            \(expected), but its XML identifies itself as \(actual).
+            """
             
         case .emptyRegionCatalog:
             return """
@@ -452,6 +467,127 @@ actor ECCCMeteocodeDatamartService {
         }
         
         return data
+    }
+    
+    func forecastDocuments(
+        for feed: ECCCForecastFeed,
+        referenceDate: Date = Date()
+    ) async throws -> [ECCCMeteocodeForecastDocument] {
+        let documentReferences =
+            try await newestDocumentReferences(
+                for: feed,
+                referenceDate: referenceDate
+            )
+        
+        var documents: [ECCCMeteocodeForecastDocument] = []
+        documents.reserveCapacity(documentReferences.count)
+        
+        for documentReference in documentReferences {
+            try Task.checkCancellation()
+            
+            let documentData =
+                try await downloadDocument(documentReference)
+            
+            let document =
+                try ECCCMeteocodeForecastXMLParser.document(
+                    from: documentData
+                )
+            
+            guard document.bulletinCode.caseInsensitiveCompare(
+                documentReference.bulletinCode
+            ) == .orderedSame else {
+                throw ECCCMeteocodeDatamartServiceError
+                    .bulletinCodeMismatch(
+                        expected: documentReference.bulletinCode,
+                        actual: document.bulletinCode,
+                        url: documentReference.url
+                    )
+            }
+            
+            documents.append(document)
+        }
+        
+        return documents.sorted {
+            if $0.bulletinCode != $1.bulletinCode {
+                return $0.bulletinCode < $1.bulletinCode
+            }
+            
+            return $0.issuedAt < $1.issuedAt
+        }
+    }
+    
+    func regionDescriptors(
+        for feed: ECCCForecastFeed,
+        referenceDate: Date = Date()
+    ) async throws -> [ECCCMeteocodeRegionDescriptor] {
+        let documentReferences =
+            try await newestDocumentReferences(for: feed, referenceDate: referenceDate)
+        
+        var descriptorsByProductID:
+            [String: ECCCMeteocodeRegionDescriptor] = [:]
+        
+        for documentReference in documentReferences {
+            try Task.checkCancellation()
+            
+            let documentData =
+                try await downloadDocument(documentReference)
+            
+            let documentDescriptors =
+                try ECCCMeteocodeRegionXMLParser.descriptors(from: documentData, feed: feed)
+            
+            for descriptor in documentDescriptors {
+                let productID = [
+                    descriptor.feed.rawValue,
+                    descriptor.product.id
+                ]
+                    .joined(separator: ":")
+                
+                if let existingDescriptor =
+                    descriptorsByProductID[productID],
+                   existingDescriptor != descriptor {
+                    throw ECCCMeteocodeRegionXMLParserError
+                        .duplicateRegionCode(
+                            bulletinCode: descriptor.bulletinCode,
+                            regionCode: descriptor.regionCode
+                        )
+                }
+                
+                descriptorsByProductID[productID] = descriptor
+            }
+        }
+        
+        let descriptors =
+            descriptorsByProductID.values.sorted {
+                firstDescriptor, secondDescriptor in
+                
+                if firstDescriptor.bulletinCode !=
+                    secondDescriptor.bulletinCode {
+                    return firstDescriptor.bulletinCode <
+                        secondDescriptor.bulletinCode
+                }
+                
+                return firstDescriptor.regionCode <
+                    secondDescriptor.regionCode
+            }
+        
+        guard !descriptors.isEmpty else {
+            throw ECCCMeteocodeDatamartServiceError.emptyRegionCatalog
+        }
+        
+        return descriptors
+    }
+    
+    /// Downloads and groups Meteocode descriptors into geographic regions.
+    ///
+    /// A returned region may contain multiple forecast products whose
+    /// valid-time windows form one continuous public forecast.
+    func forecastRegions(
+        for feed: ECCCForecastFeed,
+        referenceDate: Date = Date()
+    ) async throws -> [ECCCForecastRegion] {
+        let descriptors = try await regionDescriptors(for: feed, referenceDate: referenceDate)
+        
+        return descriptors.forecastRegions()
     }
     
     nonisolated fileprivate static func directoryURL(

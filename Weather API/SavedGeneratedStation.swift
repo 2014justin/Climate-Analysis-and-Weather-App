@@ -34,26 +34,88 @@ struct SavedGeneratedStation: Codable, Identifiable {
 }
 
 enum GeneratedStationStore {
-    private static let storageKey = "savedGeneratedStations"
-    
+    private static let legacyStorageKey =
+        "savedGeneratedStations"
+
+    private static var storageFileURL: URL {
+        get throws {
+            let applicationSupportURL =
+                try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+
+            let weatherAPIDirectory =
+                applicationSupportURL.appendingPathComponent(
+                    "Weather API",
+                    isDirectory: true
+                )
+
+            try FileManager.default.createDirectory(
+                at: weatherAPIDirectory,
+                withIntermediateDirectories: true
+            )
+
+            return weatherAPIDirectory.appendingPathComponent(
+                "GeneratedStations.json",
+                isDirectory: false
+            )
+        }
+    }
+
     static func load() throws -> [SavedGeneratedStation] {
-        guard let data = UserDefaults.standard.data(forKey: storageKey) else {
+        let fileURL = try storageFileURL
+
+        if FileManager.default.fileExists(
+            atPath: fileURL.path
+        ) {
+            let data = try Data(
+                contentsOf: fileURL
+            )
+
+            return try JSONDecoder().decode(
+                [SavedGeneratedStation].self,
+                from: data
+            )
+        }
+
+        // One-time migration from the old UserDefaults store.
+        guard let legacyData =
+                UserDefaults.standard.data(
+                    forKey: legacyStorageKey
+                )
+        else {
             return []
         }
-        
-        return try JSONDecoder().decode(
-            [SavedGeneratedStation].self,
-            from: data
+
+        let migratedStations =
+            try JSONDecoder().decode(
+                [SavedGeneratedStation].self,
+                from: legacyData
+            )
+
+        try save(migratedStations)
+
+        // Remove the oversized value only after the file write succeeds.
+        UserDefaults.standard.removeObject(
+            forKey: legacyStorageKey
         )
+
+        return migratedStations
     }
-    
-    ///The '__' means this parameter has no external argument label when the function is called.
-    static func save(_ stations: [SavedGeneratedStation]) throws {
-        let data = try JSONEncoder().encode(stations)
-        
-        UserDefaults.standard.set(
-            data,
-            forKey: storageKey
+
+    static func save(
+        _ stations: [SavedGeneratedStation]
+    ) throws {
+        let data = try JSONEncoder().encode(
+            stations
+        )
+
+        try data.write(
+            to: storageFileURL,
+            options: .atomic
         )
     }
 }

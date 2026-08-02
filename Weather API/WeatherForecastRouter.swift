@@ -28,7 +28,8 @@ struct WeatherForecastRouter: Sendable {
     
     nonisolated init(
         providers: [any WeatherForecastProviding] = [
-            NWSForecastProvider()
+            NWSForecastProvider(),
+            ECCCForecastProvider()
         ]
     ) {
         var registeredProviders: [

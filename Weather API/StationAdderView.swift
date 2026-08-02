@@ -19,17 +19,23 @@ struct StationAdderView: View {
     
     private let initialStationSource: AtlasStationSource?
     
+    private let isRebuilding: Bool
+    
     ///Creates the initializer ContentView is trying to call.
     init(
         initialStationSource:
             AtlasStationSource? = nil,
+        isRebuilding: Bool = false,
         onAdd: @escaping (
             GeneratedStationBuildResult
         ) -> Void
     ) {
         self.initialStationSource =
             initialStationSource
-        
+
+        self.isRebuilding =
+            isRebuilding
+
         _stationID = State(
             initialValue:
                 initialStationSource?
@@ -40,9 +46,11 @@ struct StationAdderView: View {
                     .uppercased()
                 ?? ""
         )
-        
+
         self.onAdd = onAdd
     }
+        
+    
     
     private func stationSource(
         for safeStationID: String
@@ -71,7 +79,11 @@ struct StationAdderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("Add Station")
+                    Text(
+                        isRebuilding
+                        ? "Rebuild Climate Station"
+                        : "Add Station"
+                    )
                         .font(.title2)
                         .bold()
 
@@ -146,7 +158,11 @@ struct StationAdderView: View {
                     }
                     .monospacedDigit()
                     
-                    Button("Add Station") {
+                    Button(
+                        isRebuilding
+                        ? "Replace Station"
+                        : "Add Station"
+                    ) {
                         onAdd(buildResult)
                         dismiss()
                     }
@@ -242,7 +258,9 @@ struct StationAdderView: View {
                     
                     Text(
                         isValidating
-                            ? "Building Climate Profile..."
+                        ? "Building Climate Profile..."
+                        : isRebuilding
+                            ? "Rebuild Station"
                             : "Build Station"
                     )
                     .bold()

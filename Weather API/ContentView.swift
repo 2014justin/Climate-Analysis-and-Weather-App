@@ -606,6 +606,11 @@ struct SeasonalWindowBar: View {
 private struct StationAdderRequest: Identifiable {
     let id = UUID()
     let initialStationSource: AtlasStationSource?
+    let replacingStationID: String?
+    
+    var isRebuilding: Bool {
+        replacingStationID != nil
+    }
 }
 
 struct ContentView: View {
@@ -666,6 +671,9 @@ struct ContentView: View {
     @State private var isBuildingGeneratedClimateProfile = false
     @State private var savedGeneratedStations: [SavedGeneratedStation] = []
     
+    /// Keeps provider catalogs and their network caches alive across refreshes.
+    @State private var forecastRouter = WeatherForecastRouter()
+    
     /// Converts persistent station records into locations the picker can display.
     private var customLocations: [WeatherLocation] {
         savedGeneratedStations.map { savedStation in
@@ -683,6 +691,23 @@ struct ContentView: View {
         savedGeneratedStations.first { savedStation in
             savedStation.id == selectedLocation.id
         }
+    }
+    
+    /// Reconstructs the provider-aware observation-station identity
+    /// needed to rebuild an existing generated climate station.
+    private func stationSource(
+        for savedStation: SavedGeneratedStation
+    ) -> AtlasStationSource {
+        let countryCode =
+        savedStation.resolvedCountryCode
+        
+        return AtlasStationSource(
+            countryCode: countryCode,
+            providerID: countryCode == "CA"
+                ? "aviationWeather"
+                : "manualEntry",
+            stationID: savedStation.observationStationID
+        )
     }
     
     /// Adds daylight phase logic to tint app background as a function of time of day.
@@ -807,15 +832,43 @@ struct ContentView: View {
 
                 Menu {
                     Button {
-                        stationAdderRequest = StationAdderRequest(
-                            initialStationSource: nil
-                        )
+                        stationAdderRequest =
+                            StationAdderRequest(
+                                initialStationSource: nil,
+                                replacingStationID: nil
+                            )
                     } label: {
                         Label(
                             "Add Station...",
                             systemImage: "plus"
                         )
                     }
+
+                    Button {
+                        guard let savedStation =
+                                selectedSavedGeneratedStation
+                        else {
+                            return
+                        }
+
+                        stationAdderRequest =
+                            StationAdderRequest(
+                                initialStationSource:
+                                    stationSource(
+                                        for: savedStation
+                                    ),
+                                replacingStationID:
+                                    savedStation.id
+                            )
+                    } label: {
+                        Label(
+                            "Rebuild Climate Station...",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .disabled(
+                        selectedSavedGeneratedStation == nil
+                    )
 
                     Divider()
 
@@ -2367,27 +2420,65 @@ struct ContentView: View {
         }
     }
     
-    /// Save generated station and remove duplicate stations
-    private func saveGeneratedStation(_ result: GeneratedStationBuildResult) {
-        let savedStation = SavedGeneratedStation(result: result)
-        
-        var updatedStations = savedGeneratedStations.filter {
-            $0.id != savedStation.id
+    /// Saves a new station or atomically replaces the original
+    /// station when completing a rebuild.
+    private func saveGeneratedStation(
+        _ result: GeneratedStationBuildResult,
+        replacingStationID: String? = nil
+    ) {
+        let savedStation =
+            SavedGeneratedStation(result: result)
+
+        let replacementIndex =
+            replacingStationID.flatMap { originalID in
+                savedGeneratedStations.firstIndex {
+                    $0.id == originalID
+                }
+            }
+
+        let stationIDsToReplace = Set(
+            [
+                savedStation.id,
+                replacingStationID
+            ]
+            .compactMap { $0 }
+        )
+
+        var updatedStations =
+            savedGeneratedStations.filter {
+                stationIDsToReplace.contains($0.id) == false
+            }
+
+        if let replacementIndex {
+            updatedStations.insert(
+                savedStation,
+                at: min(
+                    replacementIndex,
+                    updatedStations.count
+                )
+            )
+        } else {
+            updatedStations.append(savedStation)
         }
-        
-        updatedStations.append(savedStation)
-        
+
         do {
-            try GeneratedStationStore.save(updatedStations)
-            
+            try GeneratedStationStore.save(
+                updatedStations
+            )
+
             savedGeneratedStations = updatedStations
-            selectedLocation = WeatherLocation.generated(from: savedStation)
-            
+            selectedLocation =
+                WeatherLocation.generated(
+                    from: savedStation
+                )
+
             Task {
                 await refreshWeather()
             }
         } catch {
-            networkStatus = "Station could not be saved: \(error.localizedDescription)"
+            networkStatus =
+                "Station could not be saved: "
+                + error.localizedDescription
         }
     }
     
@@ -2987,7 +3078,8 @@ struct ContentView: View {
                         stationAdderRequest =
                             StationAdderRequest(
                                 initialStationSource:
-                                    observation.station.source
+                                    observation.station.source,
+                                replacingStationID: nil
                             )
                     }
                 )
@@ -3119,9 +3211,16 @@ struct ContentView: View {
             ) { request in
                 StationAdderView(
                     initialStationSource:
-                        request.initialStationSource
+                        request.initialStationSource,
+                    isRebuilding:
+                        request.isRebuilding
                 ) { result in
-                    saveGeneratedStation(result)
+                    saveGeneratedStation(
+                        result,
+                        replacingStationID:
+                            request.replacingStationID
+                    )
+
                     selectedAppSection = .dashboard
                 }
             }
@@ -3470,7 +3569,7 @@ struct ContentView: View {
             let forecastFailureDescription: String?
             
             do {
-                forecast = try await WeatherForecastRouter()
+                forecast = try await forecastRouter
                     .forecast(
                         for: ForecastRequest(
                             latitude: selectedLocation.latitude,

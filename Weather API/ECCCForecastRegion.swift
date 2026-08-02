@@ -10,32 +10,48 @@ enum ECCCForecastFeed: String, CaseIterable, Codable, Sendable {
     case que
 }
 
+/// Identifies one Meteocode forecast segment for a geographic region.
+///
+/// ECCC may divide one region's forecast across multiple bulletins with
+/// adjacent valid-time windows. For example, one bulletin may contain the
+/// short-range forecast while another continues the same region forward.
+nonisolated struct ECCCMeteocodeRegionProduct: Identifiable, Hashable, Codable, Sendable {
+    
+    let bulletinCode: String
+    let regionCode: String
+    
+    var id: String {
+        [
+            bulletinCode,
+            regionCode
+        ]
+            .joined(separator: ":")
+    }
+}
+
 /// Identifies one official ECCC public forecast region.
 ///
-/// Meteocode forecasts belong to geographic regions rather than individual
-/// weather stations. A station coordinate must therefore be resolved to one
-/// of these regions before its forecast can be downloaded.
-struct ECCCForecastRegion: Identifiable, Hashable, Codable, Sendable {
+/// A geographic region may be represented by multiple Meteocode products
+/// whose valid-time windows continue one another.
+nonisolated struct ECCCForecastRegion: Identifiable, Hashable, Codable, Sendable {
     
     let feed: ECCCForecastFeed
     
-    /// ECCC bulletin identifier, such as the FPAANN component appearing in Meteocode filenames.
-    let bulletinCode: String
+    /// Normalized bilingual identity shared with ECCC's zone geometry.
+    let identity: ECCCForecastZoneIdentity
     
-    /// Meteocode-local region code, including its `r` prefix,
-    /// for example `r16.1`.
-    let regionCode: String
-
-    /// Official English forecast-region name.
+    /// Official English forecast-region name for display.
     let name: String
     
-    /// Namespaced because a region code alone is not globally unique
-    /// across every ECCC forecast bulletin.
+    /// Every Meteocode product contributing forecast data to this region.
+    let products: [ECCCMeteocodeRegionProduct]
+    
+    /// Geographic identity deliberately excludes individual bulletin codes.
     var id: String {
         [
             feed.rawValue,
-            bulletinCode,
-            regionCode
+            identity.englishName,
+            identity.frenchName ?? ""
         ]
             .joined(separator: ":")
     }
