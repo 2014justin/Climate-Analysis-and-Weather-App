@@ -7,6 +7,14 @@
 import Foundation
 import SwiftUI
 
+/// Selects whether Atlas anotations display current observations or values from the shared forecast timeline.
+nonisolated enum AtlasWeatherLayer: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case observations = "Live"
+    case forecast = "Forecast"
+    
+    var id: Self { self }
+}
+
 enum AtlasMapMetric: String, CaseIterable, Identifiable, Hashable {
     case temperature = "Temperature"
     case dewPoint = "Dew Point"

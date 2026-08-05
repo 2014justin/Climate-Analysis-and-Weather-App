@@ -83,7 +83,7 @@ enum ECCCForecastRegionGeometryError: LocalizedError, Sendable {
 
 /// Connects ECCC's official public-zone geometry to the Meteocode region
 /// whose forecast files represent that geographic area.
-struct ECCCForecastRegionGeometry: Identifiable, Hashable, Codable, Sendable {
+nonisolated struct ECCCForecastRegionGeometry: Identifiable, Hashable, Codable, Sendable {
     /// Identifier from ECCC's published geometry  dataset.
     let featureID: String
     

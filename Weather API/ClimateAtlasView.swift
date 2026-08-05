@@ -13,7 +13,7 @@ struct ClimateAtlasView: View {
     /// one autoritative copy instead of repeating the four geographic numbers.
     /// cameraPosition controls where MapKit's viewpoint is.
     /// visibleRegion records the geographical region our station service should eventually search.
-    private static let initialRegion = MKCoordinateRegion(
+    fileprivate static let initialRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(
             latitude: 39.5,
             longitude: -98.35
@@ -31,6 +31,7 @@ struct ClimateAtlasView: View {
     @State private var visibleRegion = ClimateAtlasView.initialRegion
     
     @State private var stationScope: AtlasStationScope = .primary
+    @State private var weatherLayer: AtlasWeatherLayer = .observations
     @State private var displayedMetric: AtlasMapMetric = .temperature
     @State private var annotationSize: AtlasAnnotationSize = .medium
     @State private var isShowingMapOptions = false
@@ -48,6 +49,18 @@ struct ClimateAtlasView: View {
 
     @State private var snapshotStore =
         AviationWeatherSnapshotStore()
+    
+    /// Provider-agnostic forecasts loaded for the current visible station set.
+    @State private var forecastSnapshot: AtlasForecastSnapshot?
+    
+    @State private var forecastSnapshotStore = AtlasForecastSnapshotStore()
+    
+    @State private var isLoadingForecastSnapshot = false
+    
+    @State private var forecastStatus = "Forecast layer not loaded."
+    
+    /// Owns the shared 121-frame, five-day playback timeline.
+    @State private var forecastTimelineController = ForecastTimelineController()
     
     /// Derive bounds from MapKit. Whenever visibleRegion changes, visibleBounds is recalculated from it.
     private var visibleBounds: AtlasMapBounds {
@@ -187,7 +200,89 @@ struct ClimateAtlasView: View {
         }
     }
     
+    /// Loads forecasts for the Atlas's current reduced visible-station set.
+    @MainActor
+    fileprivate func loadVisibleForecastSnapshot(
+        forceRefresh: Bool = false
+    ) async {
+        guard stationScope == .primary,
+              isLoadingForecastSnapshot == false else {
+            return
+        }
+        
+        let requestedObservations = visibleObservations
+        
+        guard requestedObservations.isEmpty == false else {
+            forecastSnapshot = nil
+            
+            forecastTimelineController
+                .replaceAvailableInstants([])
+            
+            forecastStatus = "No visible stations are available for forecasting."
+            
+            return
+        }
+        
+        isLoadingForecastSnapshot = true
+        
+        forecastStatus =
+            "Loading forecasts for "
+        + "\(requestedObservations.count) visible stations..."
+        
+        defer {
+            isLoadingForecastSnapshot = false
+        }
+        
+        let loadedSnapshot =
+        await forecastSnapshotStore.snapshot(
+            for: requestedObservations,
+            forceRefresh: forceRefresh,
+            maximumConcurrentRequests: 8
+        )
+        
+        forecastSnapshot = loadedSnapshot
+        
+        forecastTimelineController
+            .replaceWithHourlyForecastTimeline(startingAt: loadedSnapshot.loadedAt)
+        
+        forecastStatus =
+        "\(loadedSnapshot.loadedStationCount)"
+        + "/\(loadedSnapshot.requestedStationCount)"
+        + "station forecasts loaded"
+        
+        if loadedSnapshot.failedStationCount > 0 {
+            forecastStatus +=
+            " • \(loadedSnapshot.failedStationCount)"
+        }
+        
+        forecastStatus += "."
+    }
+    
+    /// Resolves one station's temperature at the currently-selected
+    /// shared Atlas forecast instant.
+    @MainActor
+    fileprivate func forecastTemperatureFahrenheit(
+        for observation: AtlasObservation,
+        validAt selectedInstant: Date?
+    ) -> Double? {
+        guard weatherLayer == .forecast,
+              let selectedInstant, let stationForecast = forecastSnapshot?.forecast(for: observation),
+              let forecastTemperature =
+                ForecastSampleResolver.airTemperature(
+                    in: stationForecast,
+                    validAt: selectedInstant
+                ) else {
+            return nil
+        }
+        
+        return forecastTemperature.fahrenheit
+    }
+    
     var body: some View {
+        let selectedForecastInstant = forecastTimelineController.selectedInstant
+        
+        let selectedForecastFrame = forecastTimelineController.selectedIndex
+        
         /// Entire window, arranged top-to-bottom
         VStack(alignment: .leading, spacing: 16) {
             /// Header, arranged left-to-right.
@@ -204,27 +299,134 @@ struct ClimateAtlasView: View {
                 
                 Spacer()
                 
-                
-                Picker("Station scope", selection: $stationScope) {
-                    ForEach(AtlasStationScope.allCases) { scope in
-                        Text(scope.rawValue)
-                            .tag(scope)
+                HStack(
+                    alignment: .top,
+                    spacing: 12
+                ) {
+                    VStack(
+                        alignment: .trailing,
+                        spacing: 8
+                    ) {
+                        HStack(spacing: 10) {
+                            Text("Station Scope")
+                                .font(.caption)
+                                .foregroundStyle(DashboardTheme.textSecondary)
+                                .frame(width: 90, alignment: .trailing)
+                            
+                            Picker(
+                                "Station Scope",
+                                selection: $stationScope
+                            ) {
+                                ForEach(
+                                    AtlasStationScope.allCases
+                                ) { scope in
+                                    Text(scope.rawValue)
+                                        .tag(scope)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 284)
+                            .onChange(
+                                of: stationScope
+                            ) { _, newScope in
+                                selectedObservationID = nil
+                                
+                                showSnapshotObservations(
+                                    from: observationSnapshot,
+                                    in: visibleBounds,
+                                    scope: newScope
+                                )
+                            }
+                        }
+                        
+                        HStack(spacing: 10) {
+                            Text("Weather layer")
+                                .font(.caption)
+                                .foregroundStyle(DashboardTheme.textSecondary)
+                                .frame(width: 90, alignment: .trailing)
+                            
+                            Picker(
+                                "Weather Layer",
+                                selection: $weatherLayer
+                            ) {
+                                ForEach(
+                                    AtlasWeatherLayer.allCases
+                                ) { layer in
+                                    Text(layer.rawValue)
+                                        .tag(layer)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 284)
+                            .onChange(
+                                of: weatherLayer
+                            ) { _, newLayer in
+                                selectedObservationID = nil
+                                
+                                switch newLayer {
+                                case .observations:
+                                    forecastTimelineController.pause()
+                                    
+                                case .forecast:
+                                    displayedMetric = .temperature
+                                    
+                                    Task {
+                                        await loadVisibleForecastSnapshot()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    
+                }
+            }
+            
+            HStack(spacing: 10) {
+                Button(
+                    weatherLayer == .forecast
+                    ? (
+                        isLoadingForecastSnapshot
+                        ? "Loading Forecast..."
+                        : "Refresh Forecasts"
+                    )
+                    : (
+                        isLoadingObservations
+                        ? "Loading Stations..."
+                        : "Refresh Live Data"
+                    )
+                ) {
+                    Task {
+                        switch weatherLayer {
+                        case .observations:
+                            await loadObservationSnapshot(forceRefresh: true)
+                            
+                        case .forecast:
+                            await loadVisibleForecastSnapshot(forceRefresh: true)
+                        }
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
-                
-                .onChange(
-                    of: stationScope
-                ) {_, newScope in
-                    showSnapshotObservations(
-                        from: observationSnapshot,
-                        in: visibleBounds,
-                        scope: newScope,
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    stationScope != .primary
+                    || (
+                        weatherLayer == .forecast
+                        ? isLoadingForecastSnapshot
+                        : isLoadingObservations
                     )
-                }
+                )
                 
-                /// Map Options User Interface
+                Text(
+                    weatherLayer == .forecast
+                        ? forecastStatus
+                        : observationStatus
+                )
+                .font(.subheadline)
+                .foregroundStyle(DashboardTheme.textSecondary)
+                Spacer()
+                
                 Button {
                     isShowingMapOptions.toggle()
                 } label: {
@@ -244,33 +446,6 @@ struct ClimateAtlasView: View {
                     )
                 }
                 .help("Adjust Atlas display options")
-            }
-            
-            HStack(spacing: 10) {
-                Button(
-                    isLoadingObservations
-                        ? "Loading Stations..."
-                        : "Refresh Live Data"
-                ) {
-                    Task {
-                        await loadObservationSnapshot(
-                            forceRefresh: true
-                        )
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    isLoadingObservations
-                    || stationScope != .primary
-                )
-
-                Text(observationStatus)
-                    .font(.subheadline)
-                    .foregroundStyle(
-                        DashboardTheme.textSecondary
-                    )
-
-                Spacer()
             }
             
             ///$cameraPosition is two-way binding. The map can update the stored camera when the user moves it.
@@ -298,7 +473,20 @@ struct ClimateAtlasView: View {
                             AtlasTemperatureAnnotationView(
                                 observation: observation,
                                 displayedMetric: displayedMetric,
-                                annotationSize: annotationSize
+                                annotationSize: annotationSize,
+                                weatherLayer: weatherLayer,
+                                forecastTemperatureFahrenheit:
+                                    forecastTemperatureFahrenheit(
+                                        for: observation,
+                                        validAt:
+                                            selectedForecastInstant
+                                    )
+                            )
+                            .id(
+                                weatherLayer == .forecast
+                                ? "\(observation.id):forecast:"
+                                + "\(selectedForecastFrame ?? -1)"
+                                : "\(observation.id):live"
                             )
                         }
                         .buttonStyle(.plain)
@@ -402,6 +590,9 @@ struct ClimateAtlasView: View {
                     .padding(12)
                     .allowsHitTesting(false)
                 }
+            if weatherLayer == .forecast {
+                AtlasForecastTimelineView(controller: forecastTimelineController)
+            }
         }
         .padding(20)
         

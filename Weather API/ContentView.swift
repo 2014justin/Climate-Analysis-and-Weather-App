@@ -4,6 +4,7 @@ import Charts
 import AppKit
 import UniformTypeIdentifiers
 
+
 struct RefreshWeatherActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
@@ -615,7 +616,6 @@ private struct StationAdderRequest: Identifiable {
 
 struct ContentView: View {
     /// App's memory of which section (atlas/dashboard) is being selected.
-    
     @State private var selectedAppSection: AppSection = .dashboard
     @State private var observation = WeatherObservation(
         /// Start by defining the state variables. These are variables that can change in real time and be displayed
@@ -633,6 +633,10 @@ struct ContentView: View {
         condition: "Unknown",
         lastUpdated: "10:30 AM"
     )
+    
+    @Environment(\.accessibilityReduceMotion)
+    private var accessibilityReduceMotion
+    
     ///State variables are the core of the app
     @State private var selectedClimateGraph = ClimateGraphType.annualTemperatureCurve
     @State private var activeClimateGraph: ClimateGraphType?
@@ -763,21 +767,100 @@ struct ContentView: View {
         BackgroundStar(x: 0.79, y: 0.92, size: 3.3, opacity: 0.88),
         BackgroundStar(x: 0.57, y: 0.93, size: 4.0, opacity: 0.79),
         BackgroundStar(x: 0.39, y: 0.92, size: 3.3, opacity: 0.88),
-        BackgroundStar(x: 0.17, y: 0.93, size: 4.0, opacity: 0.79)
+        BackgroundStar(x: 0.17, y: 0.93, size: 4.0, opacity: 0.79),
+        BackgroundStar(x: 0.32, y: 0.07, size: 1.5, opacity: 0.68),
+        BackgroundStar(x: 0.37, y: 0.15, size: 1.1, opacity: 0.58),
+        BackgroundStar(x: 0.62, y: 0.07, size: 1.8, opacity: 0.76),
+        BackgroundStar(x: 0.67, y: 0.17, size: 1.2, opacity: 0.62),
+        BackgroundStar(x: 0.72, y: 0.10, size: 1.4, opacity: 0.70),
+        BackgroundStar(x: 0.77, y: 0.19, size: 1.0, opacity: 0.56),
+        BackgroundStar(x: 0.82, y: 0.07, size: 1.9, opacity: 0.78),
+        BackgroundStar(x: 0.87, y: 0.16, size: 1.3, opacity: 0.66),
+        BackgroundStar(x: 0.92, y: 0.09, size: 1.1, opacity: 0.60),
+        BackgroundStar(x: 0.95, y: 0.20, size: 1.6, opacity: 0.72),
+        BackgroundStar(x: 0.025, y: 0.40, size: 1.2, opacity: 0.58),
+        BackgroundStar(x: 0.975, y: 0.48, size: 1.5, opacity: 0.68),
+        BackgroundStar(x: 0.26, y: 0.91, size: 1.1, opacity: 0.60),
+        BackgroundStar(x: 0.21, y: 0.84, size: 1.7, opacity: 0.72)
     ]
     
+    
+    
     private var starOverlay: some View {
-        GeometryReader { geometry in
-            ForEach(backgroundStars) { star in
-                Circle()
-                    .fill(.white)
-                    .frame(width: star.size, height: star.size)
-                    .opacity(star.opacity)
+        TimelineView(
+            .animation(
+                minimumInterval: 1.0 / 12.0,
+                paused: accessibilityReduceMotion
+            )
+        ) { timeline in
+            let elapsed =
+                timeline.date
+                    .timeIntervalSinceReferenceDate
+
+            let rotationDegrees =
+                accessibilityReduceMotion
+                    ? 0.0
+                    : sin(elapsed / 90.0) * 1.4
+
+            let horizontalDrift: CGFloat =
+                accessibilityReduceMotion
+                    ? 0.0
+                    : CGFloat(
+                        cos(elapsed / 110.0) * 4.0
+                    )
+
+            let verticalDrift: CGFloat =
+                accessibilityReduceMotion
+                    ? 0.0
+                    : CGFloat(
+                        sin(elapsed / 140.0) * 2.5
+                    )
+            
+            GeometryReader { geometry in
+                ForEach(backgroundStars) { star in
+                    ZStack {
+                        Circle()
+                            .fill(
+                                DashboardTheme
+                                    .forecastTemperature
+                                    .opacity(0.14)
+                            )
+                            .frame(
+                                width: star.size * 3.2,
+                                height: star.size * 3.2
+                            )
+                        
+                        Circle()
+                            .fill(.white)
+                            .frame(
+                                width: star.size,
+                                height: star.size
+                            )
+                    }
+                    .opacity(
+                        min(
+                            star.opacity + 0.10,
+                            1.0
+                        )
+                    )
+                    .shadow(
+                        color: Color.white.opacity(0.22),
+                        radius: star.size * 0.65
+                    )
                     .position(
                         x: geometry.size.width * star.x,
                         y: geometry.size.height * star.y
                     )
+                }
             }
+            .scaleEffect(1.04)
+            .rotationEffect(
+                .degrees(rotationDegrees)
+            )
+            .offset(
+                x: horizontalDrift,
+                y: verticalDrift
+            )
         }
         .allowsHitTesting(false)
     }
@@ -813,7 +896,7 @@ struct ContentView: View {
     
     ///Dashboard UI
     private var dashboardView: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Weather Dashboard")
                 .font(.largeTitle)
             /// Gives the application a text identifying itself as a 'weather dashboard'
@@ -884,26 +967,32 @@ struct ContentView: View {
                         selectedSavedGeneratedStation == nil
                     )
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(
-                            .system(
-                                size: 15,
-                                weight: .bold
-                            )
-                        )
-                        .foregroundStyle(.white)
-                        .accessibilityLabel("Manage Stations")
+                    HStack(spacing: 7) {
+                        Image(systemName: "gearshape.fill")
+                            .symbolRenderingMode(.monochrome)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DashboardTheme.forecastTemperature)
+                        
+                        Text("Station Settings")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(DashboardTheme.textPrimary)
+                    }
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity
+                    )
+                    .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .frame(width: 50, height: 32)
+                .frame(width: 140, height: 32)
                 .background {
                     RoundedRectangle(
                         cornerRadius: 8,
                         style: .continuous
                     )
                     .fill(
-                        DashboardTheme.observedTemperature
+                        DashboardTheme.panelElevated.opacity(0.88)
                     )
                 }
                 .overlay {
@@ -912,7 +1001,7 @@ struct ContentView: View {
                         style: .continuous
                     )
                     .stroke(
-                        Color.white.opacity(0.22),
+                        DashboardTheme.border,
                         lineWidth: 1
                     )
                     .allowsHitTesting(false)
@@ -923,25 +1012,89 @@ struct ContentView: View {
                         style: .continuous
                     )
                 )
-                .shadow(
-                    color:
-                        DashboardTheme.observedTemperature
-                            .opacity(0.28),
-                    radius: 4,
-                    y: 1
-                )
-                .help("Manage Stations")
+                
+                .help("Station Settings")
+                
+                HStack(spacing: 8) {
+                    Text(
+                        "Station: \(selectedLocation.displayStationID)"
+                    )
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                    
+                    stationRefreshStatus
+                    
+                    Divider()
+                        .frame(height: 18)
+
+                    Button {
+                        Task {
+                            await refreshWeather()
+                        }
+                    } label: {
+                        Image(
+                            systemName: isLoading
+                                ? "arrow.triangle.2.circlepath"
+                                : "arrow.clockwise"
+                        )
+                        .symbolRenderingMode(.monochrome)
+                        .font(
+                            .system(
+                                size: 12,
+                                weight: .bold
+                            )
+                        )
+                        .foregroundStyle(
+                            DashboardTheme.forecastTemperature
+                        )
+                        .frame(width: 24, height: 24)
+                        .background {
+                            RoundedRectangle(
+                                cornerRadius: 6,
+                                style: .continuous
+                            )
+                            .fill(
+                                DashboardTheme.observedTemperature
+                                    .opacity(0.14)
+                            )
+                        }
+                        .contentShape(
+                            RoundedRectangle(
+                                cornerRadius: 6,
+                                style: .continuous
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isLoading)
+                    .help(
+                        isLoading
+                            ? "Refreshing Station"
+                            : "Refresh Station"
+                    )
+                    .accessibilityLabel(
+                        isLoading
+                            ? "Refreshing Station"
+                            : "Refresh Station"
+                    )
+                }
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(DashboardTheme.panelElevated.opacity(0.72))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(DashboardTheme.border, lineWidth: 1)
+                }
+                
+                Spacer(minLength: 0)
                 
             }
             .controlSize(.large)
-
-            HStack(spacing: 10) {
-                Text("Station: \(selectedLocation.displayStationID)")
-                    .font(.headline)
-                
-                stationRefreshStatus
-                    .font(.subheadline.weight(.semibold))
-            }
+            
                         
             Divider()
             
@@ -964,7 +1117,7 @@ struct ContentView: View {
         }
     }
     
-    /// Gives current conditions a nice card.
+    /// Gives current conditions a nice card. Thermal Gauge update as of Aug 3, 2026
     private var leftDashboardPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             dashboardCard {
@@ -972,7 +1125,35 @@ struct ContentView: View {
                     Text("Current Conditions")
                         .font(.headline)
                     
-                    currentConditionsGrid
+                    ThermalGaugeView(
+                        scale: thermalGaugeScale,
+                        airTemperature:
+                            currentConditionValue(
+                                observation.airTemperature
+                            ),
+                        heatIndex:
+                            currentConditionValue(
+                                observation.heatIndex
+                            ),
+                        wetBulb:
+                            currentConditionValue(
+                                observation.wetBulb
+                            ),
+                        dewPoint:
+                            currentConditionValue(
+                                observation.dewPoint
+                            ),
+                        conditionDescription:
+                            currentConditionDescription,
+                        windSpeed:
+                            currentConditionValue(
+                                observation.windSpeed
+                            ),
+                        pressure:
+                            currentConditionValue(
+                                observation.pressure
+                            )
+                    )
                 }
             }
             
@@ -986,65 +1167,147 @@ struct ContentView: View {
     
     /// Dashboard controls that live beneath the left information cards.
     private var dashboardActionButtons: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button(
-                isLoading
-                    ? "Refreshing..."
-                    : "Refresh Weather"
-            ) {
-                Task {
-                    await refreshWeather()
-                }
+        VStack(
+            alignment: .leading,
+            spacing: 8
+        ) {
+            Button {
+                selectedClimateGraph =
+                    .annualTemperatureCurve
+
+                activeClimateGraph =
+                    .annualTemperatureCurve
+            } label: {
+                exploreActionLabel(
+                    title: "Climate Graphs",
+                    subtitle: "Seasonal curves & weather year",
+                    symbol: "chart.line.uptrend.xyaxis",
+                    accent: DashboardTheme.forecastTemperature,
+                    trailingSymbol: "chevron.right"
+                )
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-            .disabled(isLoading)
+            .buttonStyle(.plain)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: 48,
+                maxHeight: 48
+            )
+            .help("Open Climate Graphs")
+            .accessibilityLabel("Open Climate Graphs")
             
-            Button(
-                isLoadingForecastDiscussion
-                    ? "Loading Discussion..."
-                    : "Show Forecast Discussion"
-            ) {
+            Button {
                 Task {
                     await loadForecastDiscussion()
                 }
+            } label: {
+                exploreActionLabel(
+                    title:
+                        isLoadingForecastDiscussion
+                            ? "Loading Discussion..."
+                            : "Forecast Discussion",
+                    subtitle: "Technical forecast outlook",
+                    symbol: "text.bubble",
+                    accent: DashboardTheme.dayGlow,
+                    trailingSymbol: "chevron.right"
+                )
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
+            .buttonStyle(.plain)
             .disabled(isLoadingForecastDiscussion)
-            
-            Menu("Climate ▾") {
-                Button("Show Annual Temperature Curve") {
-                    selectedClimateGraph =
-                        .annualTemperatureCurve
-                    activeClimateGraph =
-                        .annualTemperatureCurve
-                }
-                
-                Button("Show Seasonal Hysteresis Curve") {
-                    selectedClimateGraph =
-                        .seasonalHysteresisCurve
-                    activeClimateGraph =
-                        .seasonalHysteresisCurve
-                }
-                
-                Button("Show Threshold Seasons") {
-                    selectedClimateGraph =
-                        .thresholdSeasons
-                    activeClimateGraph =
-                        .thresholdSeasons
-                }
-                
-                Button("Show Weather Year Graph") {
-                    selectedClimateGraph =
-                        .weatherForTheYear
-                    activeClimateGraph =
-                        .weatherForTheYear
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
         }
+        .padding(.horizontal, 14)
+        .frame(
+            width: 365,
+            alignment: .leading
+        )
+    }
+    
+    private func exploreActionLabel(
+        title: String,
+        subtitle: String,
+        symbol: String,
+        accent: Color,
+        trailingSymbol: String
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .symbolRenderingMode(.monochrome)
+                .font(
+                    .system(
+                        size: 15,
+                        weight: .semibold
+                    )
+                )
+                .foregroundStyle(accent)
+                .frame(width: 28, height: 28)
+                .background {
+                    RoundedRectangle(
+                        cornerRadius: 7,
+                        style: .continuous
+                    )
+                    .fill(accent.opacity(0.10))
+                }
+
+            VStack(
+                alignment: .leading,
+                spacing: 2
+            ) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(
+                        DashboardTheme.textPrimary
+                    )
+
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(
+                        DashboardTheme.textSecondary
+                    )
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: trailingSymbol)
+                .font(
+                    .system(
+                        size: 11,
+                        weight: .semibold
+                    )
+                )
+                .foregroundStyle(
+                    DashboardTheme.textSecondary
+                )
+        }
+        .padding(.horizontal, 10)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: 48,
+            alignment: .leading
+        )
+        .background {
+            RoundedRectangle(
+                cornerRadius: 10,
+                style: .continuous
+            )
+            .fill(
+                DashboardTheme.panelElevated.opacity(0.62)
+            )
+        }
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: 10,
+                style: .continuous
+            )
+            .stroke(
+                DashboardTheme.border,
+                lineWidth: 1
+            )
+        }
+        .contentShape(
+            RoundedRectangle(
+                cornerRadius: 10,
+                style: .continuous
+            )
+        )
     }
     
     /// Provides one consistent surface for dashboard information groups.
@@ -1297,6 +1560,7 @@ struct ContentView: View {
     /// Calculate our standard deviation for thermal pace. Takes the climate normal and shows the standard deviation
     /// of temperature for max/min for a given date.
     private func thermalPaceStandardDeviation(
+        variable: ThermalPaceVariable,
         month: Int,
         day: Int,
         dayOfYear: Int
@@ -1312,7 +1576,7 @@ struct ContentView: View {
                             $0.dayOfYear == dayOfYear
                         }
                     ) {
-            switch selectedThermalPaceVariable {
+            switch variable {
             case .minimum:
                 return storedSpread.minimumStandardDeviation
                 
@@ -1346,7 +1610,7 @@ struct ContentView: View {
                         return nil
                     }
                     
-                    switch selectedThermalPaceVariable {
+                    switch variable {
                     case .minimum:
                         return observation.minimumTemperature
                         
@@ -1355,6 +1619,200 @@ struct ContentView: View {
                     }
                 }
         return WeatherMath.sampleStandardDeviation(values)
+    }
+    
+    /// Builds the shared thermal-gauge range from this station's
+    /// annual air-temperature climatology.
+    private var thermalGaugeScale: ThermalGaugeScale {
+        let climateDays = 1...365
+        
+        guard
+            let coldestNormalDay = climateDays.min(
+                by: {
+                    selectedLocation.normalLow(dayOfYear: $0)
+                        < selectedLocation.normalLow(dayOfYear: $1)
+                }
+            ),
+            let warmestNormalDay = climateDays.max(
+                by: {
+                    selectedLocation.normalHigh(dayOfYear: $0)
+                        < selectedLocation.normalHigh(dayOfYear: $1)
+                }
+            )
+        else {
+            return ThermalGaugeScale(
+                rawLowerBoundFahrenheit: -20.0,
+                rawUpperBoundFahrenheit: 120.0
+            )
+        }
+        
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = selectedLocation.timeZone
+        
+        guard
+            let referenceYearStart = calendar.date(
+                from: DateComponents(
+                    year: 2001,
+                    month: 1,
+                    day: 1
+                )
+            ),
+            let coldestNormalDate = calendar.date(
+                byAdding: .day,
+                value: coldestNormalDay - 1,
+                to: referenceYearStart
+            ),
+            let warmestNormalDate = calendar.date(
+                byAdding: .day,
+                value: warmestNormalDay - 1,
+                to: referenceYearStart
+            )
+        else {
+            return ThermalGaugeScale(
+                rawLowerBoundFahrenheit: -20.0,
+                rawUpperBoundFahrenheit: 120.0
+            )
+        }
+        
+        let coldestMonth =
+            calendar.component(
+                .month,
+                from: coldestNormalDate
+            )
+        
+        let coldestDay =
+            calendar.component(
+                .day,
+                from: coldestNormalDate
+            )
+        
+        let warmestMonth =
+            calendar.component(
+                .month,
+                from: warmestNormalDate
+            )
+        
+        let warmestDay =
+            calendar.component(
+                .day,
+                from: warmestNormalDate
+            )
+        
+        let minimumStandardDeviation =
+            thermalPaceStandardDeviation(
+                variable: .minimum,
+                month: coldestMonth,
+                day: coldestDay,
+                dayOfYear: coldestNormalDay
+            ) ?? 0.0
+        
+        let maximumStandardDeviation =
+            thermalPaceStandardDeviation(
+                variable: .maximum,
+                month: warmestMonth,
+                day: warmestDay,
+                dayOfYear: warmestNormalDay
+            ) ?? 0.0
+        
+        let rawLowerBound =
+            selectedLocation.normalLow(
+                dayOfYear: coldestNormalDay
+            )
+            - 2.0 * minimumStandardDeviation
+        
+        let rawUpperBound =
+            selectedLocation.normalHigh(
+                dayOfYear: warmestNormalDay
+            )
+            + 2.0 * maximumStandardDeviation
+        
+        return ThermalGaugeScale(
+            rawLowerBoundFahrenheit: rawLowerBound,
+            rawUpperBoundFahrenheit: rawUpperBound
+        )
+    }
+    
+    /// Compares the first complete future station-local forecast day with that date's climatology.
+    fileprivate var forecastNormalComparison: ForecastNormalComparison? {
+        
+        var calendar = Calendar(identifier: .gregorian)
+        
+        calendar.timeZone = selectedLocation.timeZone
+        
+        let today = calendar.startOfDay(for: Date())
+        
+        
+        guard
+            let targetDate =
+                calendar.date(
+                    byAdding: .day,
+                    value: 1,
+                    to: today
+                )
+        else {
+            return nil
+        }
+        
+        let forecastPoints =
+            temperatureForecast
+            .filter { point in
+                calendar.isDate(point.timestamp, inSameDayAs: targetDate)
+            }
+            .sorted {
+                $0.timestamp < $1.timestamp
+            }
+        
+        /// Reject an incomplete daily forecast. Still permits hourly & three-horly provider cadences.
+        guard
+            let firstPoint = forecastPoints.first,
+            let lastPoint = forecastPoints.last,
+            lastPoint.timestamp
+                .timeIntervalSince(firstPoint.timestamp) >= 18.0 * 60.0 * 60.0,
+            let forecastHigh = forecastPoints
+                .map(\.temperatureFahrenheit)
+                .max(),
+            let forecastLow =
+                forecastPoints
+                .map(\.temperatureFahrenheit)
+                .min(),
+            let climateDay =
+                ClimateCalendar
+                .climatologicalDayOfYear(
+                    for: targetDate,
+                    in: selectedLocation.timeZone,
+                    leapDayPolicy: .mapToFebruary28
+                )
+        else {
+            return nil
+        }
+        
+        let month = calendar.component(.month, from: targetDate)
+        
+        let day = calendar.component(.day, from: targetDate)
+        
+        let highStandardDeviation = thermalPaceStandardDeviation(
+            variable: .maximum,
+            month: month,
+            day: day,
+            dayOfYear: climateDay
+        )
+        
+        let lowStandardDeviation = thermalPaceStandardDeviation(
+            variable: .minimum,
+            month: month,
+            day: day,
+            dayOfYear: climateDay
+        )
+        
+        return ForecastNormalComparison(
+            localDate: targetDate,
+            forecastHighFahrenheit: forecastHigh,
+            forecastLowFahrenheit: forecastLow,
+            normalHighFahrenheit: selectedLocation.normalHigh(dayOfYear: climateDay),
+            normalLowFahrenheit: selectedLocation.normalLow(dayOfYear: climateDay),
+            highStandardDeviation: highStandardDeviation,
+            lowStandardDeviation: lowStandardDeviation
+        )
     }
     
     /// Generate the 29 fitted-normal points
@@ -1404,6 +1862,7 @@ struct ContentView: View {
             let temperature: Double
             let standardDeviation =
                 thermalPaceStandardDeviation(
+                    variable: selectedThermalPaceVariable,
                     month: month,
                     day: day,
                     dayOfYear: climateDay
@@ -2505,37 +2964,59 @@ struct ContentView: View {
     }
     
     ///Make the Almanac and live weather conditions lined up properly.
-    private func dashboardRow(label: String, value: String, unit: String = "") -> some View {
-        GridRow {
+    private func solarMetricRow(
+        label: String,
+        symbol: String,
+        symbolColor: Color,
+        value: String,
+        unit: String = ""
+    ) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .symbolRenderingMode(.monochrome)
+                .font(
+                    .system(
+                        size: 11,
+                        weight: .semibold
+                    )
+                )
+                .foregroundStyle(symbolColor)
+                .frame(width: 14)
+
             Text(label)
-                .frame(width: 110, alignment: .leading)
-            
-            Text(value)
-                .monospacedDigit()
-                .frame(width: 95, alignment: .trailing)
-            
-            Text(unit)
-                .frame(width: 100, alignment: .leading)
+                .lineLimit(1)
+                .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 5) {
+                Text(value)
+                    .monospacedDigit()
+
+                if !unit.isEmpty {
+                    Text(unit)
+                }
+            }
+            .fixedSize(
+                horizontal: true,
+                vertical: false
+            )
         }
+        .font(.subheadline)
     }
-    
-    /// Current conditions grid only displays measurements after a successful station refresh.
-    private func currentConditionText(
-        _ value: Double?,
-        decimalPlaces: Int = 1
-    ) -> String {
-        ///Continue only if weatherRefreshState matches the .updated case. Otherwise, return an em dash.
+    /// Returns a live measurement only after a successful weather refresh.
+    private func currentConditionValue(
+        _ value: Double?
+    ) -> Double? {
         guard case .updated = weatherRefreshState,
               let value else {
-            return "—"
+            return nil
         }
         
-        return value.formatted(
-            .number.precision(
-                .fractionLength(decimalPlaces)
-            )
-        )
+        return value
     }
+    
+   
     
     private var currentConditionDescription: String {
         guard case .updated = weatherRefreshState else {
@@ -2545,141 +3026,53 @@ struct ContentView: View {
         return observation.condition
     }
     
-    private var currentConditionsGrid: some View { /// this is the same currentConditionsGrid that was called in line 187.
-        Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: 8) {
-            /// Makes sure the grid is nice and neat. Solves the problem of some weather parameters like Temperature
-            ///  having much longer names than something like Wind. All nice and lined up.
-            GridRow {
-                Text("Air Temperature")
-                Text(currentConditionText(observation.airTemperature)) /// Makes it so air temperature is a floating point number with just one digit after the decimal.
-                    .monospacedDigit()
-                Text("°F")
-            }
-            /// observation is an instance of this type from WeatherObservation.swift. Likewise airTemperature, heatIndex, etc.
-            /// It looks inside the current WeatherObservation instance and gets its airTemperature value
-            ///  So the path is like: NWS JSON -> NWSObservationResponse/NWSObservationProperties -> latestObservation.properties.temperature.value
-            ///  -> temperature Celsius -> WeatherMath.celsiusToFahrenheit(...) -> fahrenheit -> WeatherObservation(airTemperature: fahrenheit, ... )
-            ///  ->observation.airTemperature -> Text("")
-            GridRow {
-                Text("Dew Point")
-                Text(currentConditionText(observation.dewPoint))
-                    .monospacedDigit()
-                Text("°F")
-            }
-
-            GridRow {
-                Text("Heat index")
-                Text(currentConditionText(observation.heatIndex))
-                    .monospacedDigit()
-                Text("°F")
-            }
-
-            GridRow {
-                Text("Relative Humidity")
-                Text(currentConditionText(observation.relativeHumidity))
-                    .monospacedDigit()
-                Text("%")
-            }
-
-            GridRow {
-                Text("Wind Speed")
-                Text(currentConditionText(observation.windSpeed))
-                    .monospacedDigit()
-                Text("mph")
-            }
-
-            GridRow {
-                Text("Pressure")
-                Text(
-                    currentConditionText(
-                        observation.pressure,
-                        decimalPlaces: 2
-                    )
-                )
-                .monospacedDigit()
-                
-                Text("inHg")
-            }
-
-            GridRow {
-                Text("Wet Bulb")
-                Text(currentConditionText(observation.wetBulb))
-                    .monospacedDigit()
-                Text("°F")
-            }
-
-            GridRow {
-                Text("Evaporative Cooling Potential")
-                Text(currentConditionText(observation.coolingPotential))
-                    .monospacedDigit()
-                Text("°F")
-            }
-            
-            GridRow {
-                Text("Conditions")
-                Text(currentConditionDescription)
-                Text("")
-            }
-        }
-    }
     
     private var almanacGrid: some View {
         let today = WeatherAlmanac.dayOfYear()
 
-        let normalHigh = selectedLocation.normalHigh(dayOfYear: today)
-
-        let normalLow = selectedLocation.normalLow(dayOfYear: today)
 
         let solarEnergy = selectedLocation.solarEnergy(dayOfYear: today)
 
         let solarIndex = selectedLocation.normalizedSolarEnergy(dayOfYear: today)
         
-        let sunTimes = WeatherAlmanac.sunTimes(
-            latitude: selectedLocation.latitude,
-            longitude: selectedLocation.longitude,
-            timeZone: selectedLocation.timeZone
-        )
-        let sunFormatter = DateFormatter()
-        sunFormatter.timeStyle = .short
-        sunFormatter.dateStyle = .none
-        sunFormatter.timeZone = selectedLocation.timeZone
+        
         
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Almanac")
-                .font(.headline)
             
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                dashboardRow(
-                    label: "Normal High",
-                    value: String(format: "%.1f", normalHigh),
-                    unit: "°F"
-                )
-                
-                dashboardRow(
-                    label: "Normal Low",
-                    value: String(format: "%.1f", normalLow),
-                    unit: "°F"
-                )
-                
-                dashboardRow(
+            ForecastNormalComparisonView(
+                comparison: forecastNormalComparison,
+                timeZone: selectedLocation.timeZone
+            )
+            
+            SunPathView(
+                latitude: selectedLocation.latitude,
+                longitude: selectedLocation.longitude,
+                timeZone: selectedLocation.timeZone
+            )
+            
+            VStack(
+                alignment: .leading,
+                spacing: 8
+            ) {
+                solarMetricRow(
                     label: "Daily Solar Energy",
-                    value: String(format: "%.2f", solarEnergy),
+                    symbol: "sun.max.fill",
+                    symbolColor: .orange,
+                    value: String(
+                        format: "%.2f",
+                        solarEnergy
+                    ),
                     unit: "kWh/m²/day"
                 )
-                
-                dashboardRow(
+
+                solarMetricRow(
                     label: "Normalized Solar",
-                    value: String(format: "%.3f", solarIndex)
-                )
-                
-                dashboardRow(
-                    label: "Sunrise",
-                    value: sunTimes.map { sunFormatter.string(from: $0.sunrise) } ?? "--"
-                )
-                
-                dashboardRow(
-                    label: "Sunset",
-                    value: sunTimes.map { sunFormatter.string(from: $0.sunset) } ?? "--"
+                    symbol: "chart.line.uptrend.xyaxis",
+                    symbolColor: DashboardTheme.dayGlow,
+                    value: String(
+                        format: "%.3f",
+                        solarIndex
+                    )
                 )
             }
         }
@@ -3037,6 +3430,23 @@ struct ContentView: View {
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
+            
+            /// Makes the daylight look nicer.
+            if daylightPhase == .day {
+                RadialGradient(
+                    colors: [
+                        DashboardTheme.dayGlow.opacity(0.20),
+                        DashboardTheme.dayGlow.opacity(0.055),
+                        Color.clear
+                    ],
+                    center: .topTrailing,
+                    startRadius: 0,
+                    endRadius: 850
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
+            
             if daylightPhase == .night {
                 starOverlay
             }
@@ -3100,11 +3510,12 @@ struct ContentView: View {
                 AppSectionPicker(
                     selection: $selectedAppSection
                 )
-                .padding(.top, 20)
+                .padding(.top, 14)
             }
-            /// Load the user-created stations.
+            /// Load saved stations and automatically refresh the default built-in station
             .task {
                 loadGeneratedStations()
+                await refreshWeather()
             }
         
             /// Load weather year data automatically for each selected station

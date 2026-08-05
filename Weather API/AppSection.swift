@@ -9,6 +9,16 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
     var id: Self {
         self
     }
+    
+    var systemImage: String {
+        switch self {
+        case .dashboard:
+            return "display"
+            
+        case .atlas:
+            return "map"
+        }
+    }
 }
 
 struct AppSectionPicker: View {
@@ -17,13 +27,61 @@ struct AppSectionPicker: View {
     @Binding var selection: AppSection
     
     var body: some View {
-        Picker("App section", selection: $selection) {
+        HStack(spacing: 2) {
             ForEach(AppSection.allCases) { section in
-                Text(section.rawValue)
+                Button {
+                    withAnimation(
+                        .easeInOut(duration: 0.16)
+                    ) {
+                        selection = section
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: section.systemImage)
+                            .font(
+                                .system(
+                                    size: 15,
+                                    weight: .semibold
+                                )
+                            )
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(DashboardTheme.forecastTemperature)
+                        
+                        Text(section.rawValue)
+                            .font(.headline)
+                            .foregroundStyle(
+                                selection == section
+                                    ? Color.white
+                                    : DashboardTheme.textPrimary
+                            )
+                    }
+                    .frame(
+                        width: section == .dashboard
+                            ? 150
+                            : 120
+                    )
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background {
+                    if selection == section {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(DashboardTheme.observedTemperature)
+                    }
+                }
+                .help("Show \(section.rawValue)")
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: 220)
+        .padding(3)
+        .background(
+            DashboardTheme.panelElevated,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+        }
     }
 }
+ 

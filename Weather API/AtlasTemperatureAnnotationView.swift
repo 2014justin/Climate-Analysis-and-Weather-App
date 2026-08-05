@@ -8,12 +8,22 @@ struct AtlasTemperatureAnnotationView: View {
     let displayedMetric: AtlasMapMetric
     let annotationSize: AtlasAnnotationSize
     
+    let weatherLayer: AtlasWeatherLayer
+    
+    let forecastTemperatureFahrenheit: Double?
+    
     private var displayedValue: Double? {
-        switch displayedMetric {
-        case .temperature:
-            return observation.temperatureFahrenheit
-        case .dewPoint:
-            return observation.dewPointFahrenheit
+        switch weatherLayer {
+        case .forecast:
+            return forecastTemperatureFahrenheit
+            
+        case .observations:
+            switch displayedMetric {
+            case .temperature:
+                return observation.temperatureFahrenheit
+            case .dewPoint:
+                return observation.dewPointFahrenheit
+            }
         }
     }
     

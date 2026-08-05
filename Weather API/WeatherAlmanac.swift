@@ -5,6 +5,12 @@ struct SunTimes {
     let sunset: Date
 }
 
+enum SolarDayState {
+    case normal(SunTimes)
+    case polarDay
+    case polarNight
+}
+
 enum WeatherAlmanac {
     static func dayOfYear(for date: Date = Date()) -> Int {
         let calendar = Calendar.current
@@ -848,5 +854,33 @@ enum WeatherAlmanac {
             sunrise: sunrise,
             sunset: sunset
         )
+    }
+    
+    static func solarDayState(
+        for date: Date = Date(),
+        latitude: Double,
+        longitude: Double,
+        timeZone: TimeZone = .current
+    ) -> SolarDayState {
+        if let sunTimes = sunTimes(
+            for: date,
+            latitude: latitude,
+            longitude: longitude,
+            timeZone: timeZone
+        ) {
+            return .normal(sunTimes)
+        }
+        
+        var calendar = Calendar(identifier: .gregorian)
+        
+        calendar.timeZone = timeZone
+        
+        let dayOfYear = calendar.ordinality(of: .day, in: .year, for: date) ?? 1
+        
+        let solarEnergy = eTSolarEnergy(dayOfYear: dayOfYear, latitude: latitude)
+        
+        return solarEnergy > 0.001
+        ? .polarDay
+        : .polarNight
     }
 }

@@ -28,7 +28,7 @@ struct AtlasStationSource: Codable, Hashable, Sendable {
     let providerID: String
     let stationID: String
     
-    var namespacedID: String {
+    nonisolated var namespacedID: String {
         "\(countryCode)/\(providerID)/\(stationID)"
     }
 }
@@ -45,7 +45,7 @@ struct AtlasStation: Identifiable, Codable, Hashable, Sendable {
     let administrativeAreaCode: String?
     let displayPriority: Int?
     
-    var id: String {
+    nonisolated var id: String {
         source.namespacedID
     }
 }

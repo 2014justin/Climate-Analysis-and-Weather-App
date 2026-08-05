@@ -27,9 +27,21 @@ enum DashboardTheme {
     )
 
     static let dayAccent = Color(
-        red: 0.070,
-        green: 0.140,
-        blue: 0.210
+        red: 0.020,
+        green: 0.095,
+        blue: 0.225
+    )
+    
+    static let dayHorizon = Color(
+        red: 0.075,
+        green: 0.150,
+        blue: 0.285
+    )
+    
+    static let dayGlow = Color(
+        red: 0.220,
+        green: 0.520,
+        blue: 0.900
     )
 
     static let sunriseAccent = Color(
@@ -42,6 +54,24 @@ enum DashboardTheme {
         red: 0.180,
         green: 0.100,
         blue: 0.170
+    )
+    
+    static let nightDeep = Color(
+        red: 0.004,
+        green: 0.010,
+        blue: 0.045
+    )
+
+    static let nightCobalt = Color(
+        red: 0.010,
+        green: 0.040,
+        blue: 0.135
+    )
+
+    static let nightHorizon = Color(
+        red: 0.055,
+        green: 0.050,
+        blue: 0.195
     )
 
     // MARK: - Surfaces
@@ -98,6 +128,12 @@ enum DashboardTheme {
         green: 0.25,
         blue: 0.62
     )
+    
+    static let wetBulb = Color(
+        red: 0.55,
+        green: 0.58,
+        blue: 0.64
+    )
 
     static let normal = Color(
         red: 0.95,
@@ -129,7 +165,7 @@ enum DashboardTheme {
             return [
                 canvasDeep,
                 dayAccent,
-                canvasSoft
+                dayHorizon
             ]
 
         case .sunset:
@@ -141,9 +177,9 @@ enum DashboardTheme {
 
         case .night:
             return [
-                canvasDeep,
-                canvas,
-                canvasSoft
+                nightDeep,
+                nightCobalt,
+                nightHorizon
             ]
         }
     }

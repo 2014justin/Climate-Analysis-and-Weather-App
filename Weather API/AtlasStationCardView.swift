@@ -297,10 +297,10 @@ struct AtlasStationCardView: View {
     /// Hero weather. Displays temperature with symbols very prominently when user selects a station card.
     private var heroWeather: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 14 * cardScale) {
+            HStack(spacing: 9 * cardScale) {
                 Image(systemName: "thermometer.medium")
                     .font(
-                        .system(size: 44 * cardScale)
+                        .system(size: 40 * cardScale)
                     )
                     .foregroundStyle(
                         Color.blue.opacity(0.75)
@@ -310,7 +310,7 @@ struct AtlasStationCardView: View {
                     Text(temperatureText)
                         .font(
                             .system(
-                                size: 46 * cardScale,
+                                size: 40 * cardScale,
                                 weight: .semibold,
                                 design: .rounded
                             )

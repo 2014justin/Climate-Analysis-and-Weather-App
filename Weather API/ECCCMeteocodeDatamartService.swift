@@ -381,8 +381,41 @@ nonisolated fileprivate enum ECCCMeteocodeDatamartDocumentSelector {
     }
 }
 
+/// One reusable set of parsed Meteocode documents for an ECCC feed.
+nonisolated fileprivate struct ECCCMeteocodeForecastDocumentCacheEntry: Sendable {
+    
+    let documents: [ECCCMeteocodeForecastDocument]
+    
+    let storedAt: Date
+    
+    func isFresh(
+        at date: Date,
+        lifetime: TimeInterval
+    ) -> Bool {
+        let age = date.timeIntervalSince(storedAt)
+        
+        return age >= 0.0 && age <= lifetime
+    }
+}
+
 actor ECCCMeteocodeDatamartService {
     fileprivate let session: URLSession
+    
+    /// Meteocode bulletins change much less frequent than Atlas playback frames. This prevents map movement
+    /// fom repeatedly downloading the same complete feed.
+    fileprivate let forecastDocumentCacheLifetime: TimeInterval = 15.00 * 60.00
+    
+    fileprivate var forecastDocumentCache:
+        [
+            ECCCForecastFeed: ECCCMeteocodeForecastDocumentCacheEntry
+        ] = [:]
+    
+    /// Concurrent requests for the same feed will eventually await one shared download-and-parse operation.
+    
+    fileprivate var forecastDocumentTasks:
+        [
+            ECCCForecastFeed: Task<[ECCCMeteocodeForecastDocument], Error>
+        ] = [:]
     
     init(session: URLSession = .shared) {
         self.session = session
@@ -391,55 +424,111 @@ actor ECCCMeteocodeDatamartService {
     fileprivate func newestDocumentReferences(
         for feed: ECCCForecastFeed,
         referenceDate: Date = Date()
-    ) async throws -> [ECCCMeteocodeDatamartDocumentReference] {
-        let directoryURL = try Self.directoryURL(for: feed)
+    ) async throws
+        -> [ECCCMeteocodeDatamartDocumentReference] {
         
-        var request = URLRequest(
-            url: directoryURL,
-            cachePolicy: .useProtocolCachePolicy,
-            timeoutInterval: 30
-        )
-        
-        request.setValue("Weather & Climate Atlas Swift App v1.53b", forHTTPHeaderField: "User-Agent")
-        
-        request.setValue("text/html, application/xhtml+xml", forHTTPHeaderField: "Accept")
-        
-        let (data, response) = try await session.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ECCCMeteocodeDatamartServiceError.invalidDirectoryResponse(feed)
-        }
-        
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw ECCCMeteocodeDatamartServiceError.unexpectedDirectoryStatusCode(
-                feed: feed,
-                statusCode: httpResponse.statusCode
-            )
-        }
-        
-        guard let directoryHTML =
-                String(data: data, encoding: .utf8)
-                ?? String(data: data, encoding: .isoLatin1)
-        else {
-            throw ECCCMeteocodeDatamartServiceError.unreadableDirectory(feed)
-        }
-        
-        let references =
-            ECCCMeteocodeDatamartDirectoryParser.documentReferences(
-                from: directoryHTML,
-                feed: feed,
-                directoryURL: directoryURL,
+        let directoryURLs = [
+            try Self.directoryURL(
+                for: feed
+            ),
+            try Self.archivedDirectoryURL(
+                for: feed,
                 referenceDate: referenceDate
             )
+        ]
         
-        let newestReferences =
-            ECCCMeteocodeDatamartDocumentSelector.newestDocumentReferences(from: references)
+        var lastNotFoundStatusCode: Int?
+            
+        var discoveredReferences: [ECCCMeteocodeDatamartDocumentReference] = []
         
-        guard !newestReferences.isEmpty else {
-            throw ECCCMeteocodeDatamartServiceError.noDocuments(feed)
+        for directoryURL in directoryURLs {
+            var request = URLRequest(
+                url: directoryURL,
+                cachePolicy:
+                    .useProtocolCachePolicy,
+                timeoutInterval: 30
+            )
+            
+            request.setValue(
+                "Weather & Climate Atlas Swift App v1.53b",
+                forHTTPHeaderField: "User-Agent"
+            )
+            
+            request.setValue(
+                "text/html, application/xhtml+xml",
+                forHTTPHeaderField: "Accept"
+            )
+            
+            let (data, response) =
+                try await session.data(
+                    for: request
+                )
+            
+            guard let httpResponse =
+                    response as? HTTPURLResponse else {
+                throw ECCCMeteocodeDatamartServiceError
+                    .invalidDirectoryResponse(feed)
+            }
+            
+            if httpResponse.statusCode == 404 {
+                lastNotFoundStatusCode =
+                    httpResponse.statusCode
+                continue
+            }
+            
+            guard (200..<300).contains(
+                httpResponse.statusCode
+            ) else {
+                throw ECCCMeteocodeDatamartServiceError
+                    .unexpectedDirectoryStatusCode(
+                        feed: feed,
+                        statusCode:
+                            httpResponse.statusCode
+                    )
+            }
+            
+            guard let directoryHTML =
+                    String(
+                        data: data,
+                        encoding: .utf8
+                    )
+                    ?? String(
+                        data: data,
+                        encoding: .isoLatin1
+                    ) else {
+                throw ECCCMeteocodeDatamartServiceError
+                    .unreadableDirectory(feed)
+            }
+            
+            let references =
+                ECCCMeteocodeDatamartDirectoryParser
+                    .documentReferences(
+                        from: directoryHTML,
+                        feed: feed,
+                        directoryURL: directoryURL,
+                        referenceDate: referenceDate
+                    )
+            
+            discoveredReferences.append(contentsOf: references)
+        }
+            
+        let newestReferences = ECCCMeteocodeDatamartDocumentSelector
+                .newestDocumentReferences(from: discoveredReferences)
+            if !newestReferences.isEmpty == true {
+                return newestReferences
+            }
+        
+        if let lastNotFoundStatusCode {
+            throw ECCCMeteocodeDatamartServiceError
+                .unexpectedDirectoryStatusCode(
+                    feed: feed,
+                    statusCode:
+                        lastNotFoundStatusCode
+                )
         }
         
-        return newestReferences
+        throw ECCCMeteocodeDatamartServiceError
+            .noDocuments(feed)
     }
     
     fileprivate func downloadDocument(
@@ -469,7 +558,7 @@ actor ECCCMeteocodeDatamartService {
         return data
     }
     
-    func forecastDocuments(
+    fileprivate func downloadForecastDocuments(
         for feed: ECCCForecastFeed,
         referenceDate: Date = Date()
     ) async throws -> [ECCCMeteocodeForecastDocument] {
@@ -513,6 +602,49 @@ actor ECCCMeteocodeDatamartService {
             }
             
             return $0.issuedAt < $1.issuedAt
+        }
+    }
+    
+    func forecastDocuments(
+        for feed: ECCCForecastFeed,
+        referenceDate: Date = Date(),
+        forceRefresh: Bool = false
+    ) async throws -> [ECCCMeteocodeForecastDocument] {
+        
+        let requestDate = Date()
+        if forceRefresh == false,
+           let cachedEntry = forecastDocumentCache[feed],
+           cachedEntry.isFresh(
+            at: requestDate,
+            lifetime: forecastDocumentCacheLifetime
+           ) {
+            return cachedEntry.documents
+        }
+        
+        if let existingTask = forecastDocumentTasks[feed] {
+            return try await existingTask.value
+        }
+        
+        let downloadTask = Task {
+            try await self.downloadForecastDocuments(for: feed, referenceDate: referenceDate)
+        }
+        
+        forecastDocumentTasks[feed] = downloadTask
+        
+        do {
+            let documents = try await downloadTask.value
+            
+            forecastDocumentCache[feed] = ECCCMeteocodeForecastDocumentCacheEntry(
+                documents: documents,
+                storedAt: Date()
+            )
+            
+            forecastDocumentTasks[feed] = nil
+            
+            return documents
+        } catch {
+            forecastDocumentTasks[feed] = nil
+            throw error
         }
     }
     
@@ -590,17 +722,78 @@ actor ECCCMeteocodeDatamartService {
         return descriptors.forecastRegions()
     }
     
+    
     nonisolated fileprivate static func directoryURL(
         for feed: ECCCForecastFeed
+    ) throws -> URL {
+        try directoryURL(
+            for: feed,
+            rootPath: "/today"
+        )
+    }
+    
+    nonisolated fileprivate static func
+    archivedDirectoryURL(
+        for feed: ECCCForecastFeed,
+        referenceDate: Date
+    ) throws -> URL {
+        let secondsPerDay: TimeInterval =
+            24.0 * 60.0 * 60.0
+        
+        let previousUTCDate =
+            referenceDate.addingTimeInterval(
+                -secondsPerDay
+            )
+        
+        var utcCalendar =
+            Calendar(identifier: .gregorian)
+        
+        if let utcTimeZone =
+                TimeZone(secondsFromGMT: 0) {
+            utcCalendar.timeZone = utcTimeZone
+        }
+        
+        let dateComponents =
+            utcCalendar.dateComponents(
+                [.year, .month, .day],
+                from: previousUTCDate
+            )
+        
+        guard let year = dateComponents.year,
+              let month = dateComponents.month,
+              let day = dateComponents.day else {
+            throw ECCCMeteocodeDatamartServiceError
+                .invalidDirectoryURL(feed)
+        }
+        
+        let archiveRootPath = String(
+            format:
+                "/%04d%02d%02d/WXO-DD",
+            year,
+            month,
+            day
+        )
+        
+        return try directoryURL(
+            for: feed,
+            rootPath: archiveRootPath
+        )
+    }
+    
+    nonisolated fileprivate static func directoryURL(
+        for feed: ECCCForecastFeed,
+        rootPath: String
     ) throws -> URL {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "dd.weather.gc.ca"
         components.path =
-            "/today/meteocode/\(feed.rawValue)/cmml/"
+            "\(rootPath)/meteocode/"
+            + "\(feed.rawValue)/cmml/"
         
         guard let url = components.url else {
-            throw ECCCMeteocodeDatamartServiceError.invalidDirectoryURL(feed)
+            throw ECCCMeteocodeDatamartServiceError
+                .invalidDirectoryURL(feed)
         }
         
         return url
