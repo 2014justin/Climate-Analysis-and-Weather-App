@@ -26,8 +26,8 @@ enum AtlasMapMetric: String, CaseIterable, Identifiable, Hashable {
 
 /// The visual size of each station annotation.
 enum AtlasAnnotationSize: String, CaseIterable, Identifiable, Hashable {
-    case small = "Small"
     case medium = "Medium"
+    case mediumPlus = "Medium +"
     case large = "Large"
     
     var id: Self {
@@ -36,12 +36,12 @@ enum AtlasAnnotationSize: String, CaseIterable, Identifiable, Hashable {
     
     var scale: CGFloat {
         switch self {
-        case .small:
-            return 0.80
         case .medium:
             return 1.10
+        case .mediumPlus:
+            return 1.28
         case .large:
-            return 1.40
+            return 1.52
         }
     }
 }
@@ -49,6 +49,7 @@ enum AtlasAnnotationSize: String, CaseIterable, Identifiable, Hashable {
 struct AtlasMapOptionsView: View {
     @Binding var displayedMetric: AtlasMapMetric
     @Binding var annotationSize: AtlasAnnotationSize
+    @Binding var showsSolarIllumination: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -92,6 +93,25 @@ struct AtlasMapOptionsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
+            
+            Divider()
+            
+            Toggle(
+                isOn: $showsSolarIllumination
+            ) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(
+                        "Day & Twilight",
+                        systemImage: "sun.horizon"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    
+                    Text("Solar illumination and twilight bands")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+            }
+            .toggleStyle(.switch)
         }
         .padding(16)
         .frame(width: 300)

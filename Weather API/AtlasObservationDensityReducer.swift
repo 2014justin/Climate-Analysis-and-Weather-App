@@ -1,9 +1,9 @@
 import Foundation
 
-/// 35 deg+ longitude span = up to three stations per state
-/// 12 - 35 deg long span = maximum one preferred station in each of 180 cells
-/// 5 to 12 deg = finer 336-cell layout
-/// Under 5 deg = every visible station.
+/// 35°+ longitude span = one preferred station in each of 112 cells.
+/// 12–35° = one preferred station in each of 180 cells.
+/// 5–12° = finer 336-cell layout.
+/// Under 5° = every visible station.
 struct AtlasObservationDensityReducer:
     Sendable {
 
@@ -31,9 +31,11 @@ struct AtlasObservationDensityReducer:
 
         switch bounds.longitudeSpan {
         case 35...:
-            return nationalSelection(
+            return gridSelection(
                 from: visibleObservations,
-                stationsPerArea: 3
+                in: bounds,
+                columns: 14,
+                rows: 8
             )
 
         case 12..<35:

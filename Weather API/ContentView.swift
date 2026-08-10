@@ -614,6 +614,625 @@ private struct StationAdderRequest: Identifiable {
     }
 }
 
+/// Provider-agnostic metadata consumed by station information.
+/// ContentView gathers the information here so StationInfoView does not
+/// need to understand saved stations, ACIS, ECCC, or other.
+fileprivate struct StationInfoMetadata {
+    let stationName: String
+    let stationIdentifier: String
+    let climateSourceIdentifier: String
+    let climateSourceName: String?
+    let countryCode: String
+    let latitude: Double
+    let longitude: Double
+    let timeZoneIdentifier: String
+    
+    let fitOrder: Int?
+    let highRMSE: Double?
+    let lowRMSE: Double?
+    let normalStartYear: Int?
+    let normalEndYear: Int?
+    let pairedCompleteness: Double?
+    let highTemperatureSeries: FourierSeries?
+    let lowTemperatureSeries: FourierSeries?
+    
+    init(
+        location: WeatherLocation,
+        savedStation: SavedGeneratedStation?
+    ) {
+        let profile = location.generatedClimateProfile
+        
+        stationName = location.name
+        stationIdentifier = location.displayStationID
+        climateSourceIdentifier = profile?.stationID ?? location.acisStationID
+        climateSourceName = profile?.displayName
+        countryCode = location.countryCode
+        latitude = location.latitude
+        longitude = location.longitude
+        timeZoneIdentifier = location.timeZoneIdentifier
+        
+        fitOrder = profile?.fitOrder
+        highRMSE = profile?.highRMSE
+        lowRMSE = profile?.lowRMSE
+        normalStartYear = profile?.sourceStartYear
+        normalEndYear = profile?.sourceEndYear
+        pairedCompleteness = savedStation?.pairedCompleteness
+        highTemperatureSeries = profile?.normalHighSeries
+
+        lowTemperatureSeries = profile?.normalLowSeries
+    }
+}
+
+/// Converts stored Fourier coefficients into a complete, copyable
+/// plaintext representation.
+///
+/// t is the climatological day of year and all output temperatures
+/// are degrees Fahrenheit.
+private enum FourierFitPlainTextFormatter {
+    static func text(
+        for metadata: StationInfoMetadata
+    ) -> String? {
+        guard let highSeries =
+                metadata.highTemperatureSeries,
+              let lowSeries =
+                metadata.lowTemperatureSeries else {
+            return nil
+        }
+
+        let fitOrder =
+            metadata.fitOrder.map {
+                String($0)
+            } ?? "Unknown"
+
+        let normalPeriod: String
+
+        if let startYear = metadata.normalStartYear,
+           let endYear = metadata.normalEndYear {
+            normalPeriod = "\(startYear)-\(endYear)"
+        } else {
+            normalPeriod = "Unknown"
+        }
+
+        return """
+        STATION FOURIER CLIMATE FIT
+        Station: \(metadata.stationName)
+        Station ID: \(metadata.stationIdentifier)
+        Climate source: \(metadata.climateSourceIdentifier)
+        Normal period: \(normalPeriod)
+        Fourier order: \(fitOrder)
+
+        Variable:
+        t = climatological day of year, 1...365
+
+        Units:
+        T_high(t) and T_low(t) are degrees Fahrenheit.
+
+        NORMAL HIGH-TEMPERATURE FIT
+
+        \(equation(
+            name: "T_high",
+            series: highSeries
+        ))
+
+        NORMAL LOW-TEMPERATURE FIT
+
+        \(equation(
+            name: "T_low",
+            series: lowSeries
+        ))
+        """
+    }
+
+    private static func equation(
+        name: String,
+        series: FourierSeries
+    ) -> String {
+        var result =
+            "\(name)(t) = \(coefficientText(series.constant))"
+
+        for (
+            index,
+            coefficient
+        ) in series.cosineCoefficients.enumerated() {
+            result += signedTerm(
+                coefficient: coefficient,
+                functionName: "cos",
+                harmonic: index + 1
+            )
+        }
+
+        for (
+            index,
+            coefficient
+        ) in series.sineCoefficients.enumerated() {
+            result += signedTerm(
+                coefficient: coefficient,
+                functionName: "sin",
+                harmonic: index + 1
+            )
+        }
+
+        return result
+    }
+
+    private static func signedTerm(
+        coefficient: Double,
+        functionName: String,
+        harmonic: Int
+    ) -> String {
+        let operation =
+            coefficient < 0
+                ? " - "
+                : " + "
+
+        return operation
+            + coefficientText(abs(coefficient))
+            + " * \(functionName)"
+            + "(2 * pi * \(harmonic) * t / 365)"
+    }
+
+    /// String(Double) preserves enough significant digits to reconstruct
+    /// the stored binary floating-point value when parsed again.
+    private static func coefficientText(
+        _ coefficient: Double
+    ) -> String {
+        String(coefficient)
+    }
+}
+
+private struct FourierFitView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var didCopy = false
+
+    let fitText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.path")
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(
+                        DashboardTheme.forecastTemperature
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Fourier Climate Fits")
+                        .font(.title2.weight(.bold))
+
+                    Text(
+                        "Plaintext coefficients and explicit harmonic terms"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(
+                        DashboardTheme.textSecondary
+                    )
+                }
+
+                Spacer()
+
+                Button {
+                    copyFit()
+                } label: {
+                    Label(
+                        didCopy ? "Copied" : "Copy Fit",
+                        systemImage:
+                            didCopy
+                                ? "checkmark"
+                                : "doc.on.doc"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .symbolRenderingMode(.monochrome)
+                        .font(
+                            .system(
+                                size: 12,
+                                weight: .bold
+                            )
+                        )
+                        .foregroundStyle(
+                            DashboardTheme.textSecondary
+                        )
+                        .frame(width: 28, height: 28)
+                        .background {
+                            Circle()
+                                .fill(
+                                    DashboardTheme.panelElevated
+                                )
+                        }
+                        .overlay {
+                            Circle()
+                                .stroke(
+                                    DashboardTheme.border,
+                                    lineWidth: 1
+                                )
+                        }
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close Fourier Fits")
+            }
+
+            Divider()
+
+            ScrollView([.horizontal, .vertical]) {
+                Text(verbatim: fitText)
+                    .font(
+                        .system(
+                            size: 13,
+                            design: .monospaced
+                        )
+                    )
+                    .foregroundStyle(
+                        DashboardTheme.textPrimary
+                    )
+                    .textSelection(.enabled)
+                    .fixedSize(
+                        horizontal: true,
+                        vertical: true
+                    )
+                    .padding(16)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+                .fill(
+                    DashboardTheme.panelElevated.opacity(0.72)
+                )
+            }
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: 12,
+                    style: .continuous
+                )
+                .stroke(
+                    DashboardTheme.border,
+                    lineWidth: 1
+                )
+            }
+        }
+        .padding(24)
+        .frame(width: 920, height: 580)
+        .background(DashboardTheme.panel)
+    }
+
+    private func copyFit() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            fitText,
+            forType: .string
+        )
+
+        didCopy = true
+    }
+}
+
+/// The Station Info sheet has its own presentation shell now so its metadata
+/// can be added without revisiting the Station Settings interface.
+fileprivate struct StationInfoView: View {
+    @Environment(\.dismiss) fileprivate var dismiss
+    @State private var isShowingFourierFit = false
+    
+    let metadata: StationInfoMetadata
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "info.circle.fill")
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(DashboardTheme.forecastTemperature)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Station Info")
+                        .font(.title2.weight(.bold))
+                    
+                    Text(metadata.stationName)
+                        .font(.headline)
+                    
+                    HStack(spacing: 6) {
+                        Text(metadata.stationIdentifier)
+                            .monospaced()
+                        
+                        Text("•")
+                        
+                        Text(metadata.countryCode)
+                        
+                        Text("•")
+                        
+                        Text(metadata.climateSourceIdentifier)
+                            .monospaced()
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                Spacer()
+                
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .symbolRenderingMode(.monochrome)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(
+                            DashboardTheme.textSecondary
+                        )
+                        .frame(width: 28, height: 28)
+                        .background {
+                            Circle()
+                                .fill(
+                                    DashboardTheme.panelElevated
+                                )
+                        }
+                        .overlay {
+                            Circle()
+                                .stroke(
+                                    DashboardTheme.border,
+                                    lineWidth: 1
+                                )
+                        }
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close Station Info")
+                .accessibilityLabel("Close Station Info")
+            }
+            
+            Divider()
+            
+            HStack(alignment: .top, spacing: 12) {
+                informationCard(
+                    title: "Location",
+                    systemImage: "location.fill"
+                ) {
+                    metadataRow(
+                        "Latitude",
+                        coordinateText(
+                            metadata.latitude,
+                            positiveSuffix: "N",
+                            negativeSuffix: "S"
+                        )
+                    )
+                    
+                    metadataRow(
+                        "Longitude",
+                        coordinateText(
+                            metadata.longitude,
+                            positiveSuffix: "E",
+                            negativeSuffix: "W"
+                        )
+                    )
+                    
+                    metadataRow(
+                        "Time Zone",
+                        metadata.timeZoneIdentifier
+                    )
+                }
+                
+                informationCard(
+                    title: "Climate Normal",
+                    systemImage: "calendar"
+                ) {
+                    metadataRow(
+                        "Period",
+                        normalPeriodText
+                    )
+                    
+                    metadataRow(
+                        "Completion",
+                        completenessText
+                    )
+                    
+                    metadataRow(
+                        "Source",
+                        metadata.climateSourceName ?? metadata.climateSourceIdentifier
+                    )
+                }
+                
+                informationCard(
+                    title: "Fourier Fit",
+                    systemImage: "waveform.path",
+                    actionTitle: "Show Fit",
+                    isActionEnabled:
+                        metadata.highTemperatureSeries != nil
+                    && metadata.lowTemperatureSeries != nil,
+                    action: {
+                        isShowingFourierFit = true
+                    }
+                ) {
+                    metadataRow(
+                        "Order",
+                        fitOrderText
+                    )
+                    
+                    metadataRow(
+                        "High RMSE",
+                        rmseText(metadata.highRMSE)
+                    )
+                    
+                    metadataRow(
+                        "Low RMSE",
+                        rmseText(metadata.lowRMSE)
+                    )
+                }
+            }
+            
+            Label(
+                """
+                RMSE measures the typical difference between the smoothed climate normal and
+                its Fourier representation.
+                """,
+                systemImage: "function"
+            )
+            .font(.caption)
+            .foregroundStyle(DashboardTheme.textSecondary)
+            
+            Spacer()
+        }
+        .padding(24)
+        .frame(width: 760, height: 390)
+        .background(DashboardTheme.panel)
+        .sheet(isPresented: $isShowingFourierFit) {
+            FourierFitView(
+                fitText:
+                    FourierFitPlainTextFormatter.text(
+                        for: metadata
+                    )
+                    ?? "Fourier fit coefficients are not recorded for this station."
+            )
+        }
+    }
+    
+    fileprivate var normalPeriodText: String {
+        guard let startYear = metadata.normalStartYear,
+              let endYear = metadata.normalEndYear else {
+            return "Not recorded"
+        }
+        
+        return "\(startYear)-\(endYear)"
+    }
+    
+    fileprivate var completenessText: String {
+        guard let pairedCompleteness = metadata.pairedCompleteness else {
+            return "Not recorded"
+        }
+        
+        return pairedCompleteness.formatted(.percent.precision(.fractionLength(1)))
+    }
+    
+    fileprivate var fitOrderText: String {
+        guard let fitOrder = metadata.fitOrder else {
+            return "Not recorded"
+        }
+        
+        return "Order \(fitOrder)"
+    }
+    
+    fileprivate func rmseText(
+        _ value: Double?
+    ) -> String {
+        guard let value else {
+            return "Not recorded"
+        }
+        
+        return String(
+            format: "%.2f °F",
+            value
+        )
+    }
+    
+    fileprivate func coordinateText(
+        _ value: Double,
+        positiveSuffix: String,
+        negativeSuffix: String
+    ) -> String {
+        let suffix = value >= 0 ? positiveSuffix : negativeSuffix
+        
+        return String(
+            format: "%.4f° %@",
+            abs(value),
+            suffix
+        )
+    }
+    
+    fileprivate func metadataRow(
+        _ label: String,
+        _ value: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DashboardTheme.textSecondary)
+            
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.750)
+        }
+    }
+    
+    fileprivate func informationCard<Content: View>(
+        title: String,
+        systemImage: String,
+        actionTitle: String? = nil,
+        isActionEnabled: Bool = true,
+        action: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Label(
+                    title,
+                    systemImage: systemImage
+                )
+                .font(.headline)
+                .foregroundStyle(
+                    DashboardTheme.forecastTemperature
+                )
+                .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if let actionTitle,
+                   let action {
+                    Button(
+                        actionTitle,
+                        action: action
+                    )
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!isActionEnabled)
+                    .help(
+                        isActionEnabled
+                            ? "Show plaintext Fourier coefficients"
+                            : "Fourier coefficients are not recorded for this station"
+                    )
+                }
+            }
+
+            content()
+
+            Spacer(minLength: 0)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: 185,
+            alignment: .topLeading
+        )
+        .padding(16)
+        .background {
+            RoundedRectangle(
+                cornerRadius: 14,
+                style: .continuous
+            )
+            .fill(
+                DashboardTheme.panelElevated.opacity(0.88)
+            )
+        }
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: 14,
+                style: .continuous
+            )
+            .stroke(
+                DashboardTheme.border,
+                lineWidth: 1
+            )
+        }
+    }
+}
+
 struct ContentView: View {
     /// App's memory of which section (atlas/dashboard) is being selected.
     @State private var selectedAppSection: AppSection = .dashboard
@@ -664,6 +1283,8 @@ struct ContentView: View {
     @State private var isShowingForecastDiscussion = false
     @State private var isLoadingForecastDiscussion = false
     @State private var selectedLocation = WeatherLocation.northLasVegas
+    @State private var isShowingStationSettings = false
+    @State private var isShowingStationInfo = false
     /// A non-nil request presents the builder and carries
     /// its starting weather-station ID.
     @State private var stationAdderRequest:
@@ -893,6 +1514,130 @@ struct ContentView: View {
             .foregroundStyle(DashboardTheme.failure)
         }
     }
+
+    /// A custom popover is used instead of Menu because macOS menus always
+    /// arrange their commands vertically. This keeps all four station actions
+    /// visible as one compact horizontal tool palette.
+    private var stationSettingsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Station Settings")
+                    .font(.headline.weight(.bold))
+
+                Spacer()
+
+                Text(selectedLocation.displayStationID)
+                    .font(.caption.monospaced().weight(.semibold))
+                    .foregroundStyle(DashboardTheme.textSecondary)
+            }
+
+            HStack(spacing: 10) {
+                stationSettingsAction(
+                    title: "Add Station",
+                    subtitle: "Create a climate profile",
+                    systemImage: "plus.circle.fill",
+                    tint: DashboardTheme.forecastTemperature
+                ) {
+                    isShowingStationSettings = false
+                    stationAdderRequest = StationAdderRequest(
+                        initialStationSource: nil,
+                        replacingStationID: nil
+                    )
+                }
+
+                stationSettingsAction(
+                    title: "Rebuild Station",
+                    subtitle: "Refresh climate records",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    tint: DashboardTheme.dewPoint,
+                    isEnabled: selectedSavedGeneratedStation != nil
+                ) {
+                    guard let savedStation = selectedSavedGeneratedStation else {
+                        return
+                    }
+
+                    isShowingStationSettings = false
+                    stationAdderRequest = StationAdderRequest(
+                        initialStationSource: stationSource(for: savedStation),
+                        replacingStationID: savedStation.id
+                    )
+                }
+
+                stationSettingsAction(
+                    title: "Remove Station",
+                    subtitle: "Delete this saved profile",
+                    systemImage: "trash.fill",
+                    tint: DashboardTheme.failure,
+                    isEnabled: selectedSavedGeneratedStation != nil
+                ) {
+                    isShowingStationSettings = false
+                    isShowingStationRemovalConfirmation = true
+                }
+
+                stationSettingsAction(
+                    title: "Station Info",
+                    subtitle: "Metadata & fit quality",
+                    systemImage: "info.circle.fill",
+                    tint: DashboardTheme.observedTemperature
+                ) {
+                    isShowingStationSettings = false
+                    isShowingStationInfo = true
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 700)
+        .background(DashboardTheme.panel)
+    }
+
+    private func stationSettingsAction(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        tint: Color,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: systemImage)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 34, height: 34)
+                    .background {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(tint.opacity(0.13))
+                    }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DashboardTheme.textPrimary)
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 157, height: 106)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(DashboardTheme.panelElevated.opacity(0.88))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+        }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.43)
+    }
     
     ///Dashboard UI
     private var dashboardView: some View {
@@ -913,59 +1658,8 @@ struct ContentView: View {
                     }
                 }
 
-                Menu {
-                    Button {
-                        stationAdderRequest =
-                            StationAdderRequest(
-                                initialStationSource: nil,
-                                replacingStationID: nil
-                            )
-                    } label: {
-                        Label(
-                            "Add Station...",
-                            systemImage: "plus"
-                        )
-                    }
-
-                    Button {
-                        guard let savedStation =
-                                selectedSavedGeneratedStation
-                        else {
-                            return
-                        }
-
-                        stationAdderRequest =
-                            StationAdderRequest(
-                                initialStationSource:
-                                    stationSource(
-                                        for: savedStation
-                                    ),
-                                replacingStationID:
-                                    savedStation.id
-                            )
-                    } label: {
-                        Label(
-                            "Rebuild Climate Station...",
-                            systemImage: "arrow.clockwise"
-                        )
-                    }
-                    .disabled(
-                        selectedSavedGeneratedStation == nil
-                    )
-
-                    Divider()
-
-                    Button(role: .destructive) {
-                        isShowingStationRemovalConfirmation = true
-                    } label: {
-                        Label(
-                            "Remove Current Location...",
-                            systemImage: "trash"
-                        )
-                    }
-                    .disabled(
-                        selectedSavedGeneratedStation == nil
-                    )
+                Button {
+                    isShowingStationSettings.toggle()
                 } label: {
                     HStack(spacing: 7) {
                         Image(systemName: "gearshape.fill")
@@ -983,8 +1677,7 @@ struct ContentView: View {
                     )
                     .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
                 .frame(width: 140, height: 32)
                 .background {
                     RoundedRectangle(
@@ -1014,6 +1707,12 @@ struct ContentView: View {
                 )
                 
                 .help("Station Settings")
+                .popover(
+                    isPresented: $isShowingStationSettings,
+                    arrowEdge: .bottom
+                ) {
+                    stationSettingsPopover
+                }
                 
                 HStack(spacing: 8) {
                     Text(
@@ -3590,6 +4289,13 @@ struct ContentView: View {
             }
             .sheet(isPresented: $isShowingForecastDiscussion) {
                 ForecastDiscussionView(discussion: forecastDiscussion)
+            }
+            .sheet(isPresented: $isShowingStationInfo) {
+                StationInfoView(
+                    metadata: StationInfoMetadata(
+                        location: selectedLocation,
+                        savedStation: selectedSavedGeneratedStation)
+                )
             }
         /// Makes sure the desired climate graph is actually the one being selected
             .sheet(item: $activeClimateGraph) { _ in

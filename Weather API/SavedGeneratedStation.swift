@@ -13,6 +13,7 @@ struct SavedGeneratedStation: Codable, Identifiable {
     let longitude: Double
     let timeZoneIdentifier: String
     let acisStationID: String
+    let pairedCompleteness: Double?
     let generatedClimateProfile: GeneratedClimateProfile
     
     init(result: GeneratedStationBuildResult) {
@@ -25,6 +26,7 @@ struct SavedGeneratedStation: Codable, Identifiable {
         self.longitude = result.weatherLongitude
         self.timeZoneIdentifier = result.timeZoneIdentifier
         self.acisStationID = result.climateStationID
+        self.pairedCompleteness = result.pairedCompleteness
         self.generatedClimateProfile = result.profile
     }
     

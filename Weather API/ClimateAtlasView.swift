@@ -33,7 +33,9 @@ struct ClimateAtlasView: View {
     @State private var stationScope: AtlasStationScope = .primary
     @State private var weatherLayer: AtlasWeatherLayer = .observations
     @State private var displayedMetric: AtlasMapMetric = .temperature
-    @State private var annotationSize: AtlasAnnotationSize = .medium
+    @State private var annotationSize: AtlasAnnotationSize = .mediumPlus
+    @State private var liveSolarInstant = Date.now
+    @State private var showsSolarIllumination = false
     @State private var isShowingMapOptions = false
     @State private var selectedObservationID: String?
     @State private var visibleObservations:
@@ -280,8 +282,14 @@ struct ClimateAtlasView: View {
     
     var body: some View {
         let selectedForecastInstant = forecastTimelineController.selectedInstant
+        let solarIlluminationInstant =
+        weatherLayer == .forecast
+            ? selectedForecastInstant ?? liveSolarInstant
+            : liveSolarInstant
         
-        let selectedForecastFrame = forecastTimelineController.selectedIndex
+        let solarEphemeris =
+            SolarPositionCalculator.ephemeris(at: solarIlluminationInstant)
+        
         
         /// Entire window, arranged top-to-bottom
         VStack(alignment: .leading, spacing: 16) {
@@ -442,7 +450,8 @@ struct ClimateAtlasView: View {
                 ) {
                     AtlasMapOptionsView(
                         displayedMetric: $displayedMetric,
-                        annotationSize: $annotationSize
+                        annotationSize: $annotationSize,
+                        showsSolarIllumination: $showsSolarIllumination
                     )
                 }
                 .help("Adjust Atlas display options")
@@ -450,6 +459,9 @@ struct ClimateAtlasView: View {
             
             ///$cameraPosition is two-way binding. The map can update the stored camera when the user moves it.
             Map(position: $cameraPosition) {
+                if showsSolarIllumination {
+                    AtlasSolarIlluminationLayer(ephemeris: solarEphemeris)
+                }
                 ForEach(visibleObservations) { observation in
                     Annotation(
                         observation.station.name,
@@ -482,12 +494,7 @@ struct ClimateAtlasView: View {
                                             selectedForecastInstant
                                     )
                             )
-                            .id(
-                                weatherLayer == .forecast
-                                ? "\(observation.id):forecast:"
-                                + "\(selectedForecastFrame ?? -1)"
-                                : "\(observation.id):live"
-                            )
+                            
                         }
                         .buttonStyle(.plain)
                         .popover(
@@ -615,6 +622,21 @@ struct ClimateAtlasView: View {
             
             await loadObservationSnapshot()
         }
+        
+        .task {
+            let clock = ContinuousClock()
+            
+            while !Task.isCancelled {
+                liveSolarInstant = Date.now
+                
+                do {
+                    try await clock.sleep(for: .seconds(60))
+                } catch {
+                    return
+                }
+            }
+        }
+        
         .onChange(
             of: selectedAppSection
         ) {_, newSection in

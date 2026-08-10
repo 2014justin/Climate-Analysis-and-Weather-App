@@ -131,6 +131,16 @@ struct AtlasTemperatureAnnotationView: View {
         }
     }
     
+    fileprivate var displayedCharacterCount: CGFloat {
+        CGFloat(
+            max(displayedText.count, 2)
+        )
+    }
+    
+    fileprivate var displayedTextWidth: CGFloat {
+        displayedCharacterCount * 9.0 * annotationSize.scale
+    }
+    
     var body: some View {
         Text(displayedText)
             .font(
@@ -141,8 +151,15 @@ struct AtlasTemperatureAnnotationView: View {
                 )
             )
             .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .frame(
+                width: displayedTextWidth,
+                height: 18 * annotationSize.scale,
+                alignment: .center
+            )
             .foregroundStyle(displayedValueColor)
-            .padding(.horizontal, 5 * annotationSize.scale)
+            .padding(.horizontal, 4 * annotationSize.scale)
             .padding(.vertical, 2 * annotationSize.scale)
             .background(
                 Color.black.opacity(0.72),
@@ -163,6 +180,15 @@ struct AtlasTemperatureAnnotationView: View {
             )
             .accessibilityLabel(
                 "\(observation.station.name), \(accessibilityValue)"
+            )
+            .transaction { transaction in
+                transaction.animation = nil
+                
+            }
+            .id(
+                "\(weatherLayer.rawValue):"
+                + "\(displayedMetric.rawValue):"
+                + displayedText
             )
     }
 }
