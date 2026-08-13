@@ -7,6 +7,9 @@ struct AnnualTemperatureChartOptions {
     /// Master visibility switch for both variability envelopes.
     var showsVariabilityBands = true
     
+    /// 32 F freeze line for the annual temp curve
+    var showFreezeLine = true
+    
     /// Number of std dev displayed (z-value):
     var sigmaLevel = 1
     
@@ -210,6 +213,11 @@ struct AnnualTemperatureGraphOptionsView: View {
                 Toggle(
                     "Thermal midsommar and midwinter",
                     isOn: $options.showsThermalTimingSummary
+                )
+                .toggleStyle(.checkbox)
+                Toggle(
+                    "Show 32°F Freeze Line",
+                    isOn: $options.showFreezeLine
                 )
                 .toggleStyle(.checkbox)
             }

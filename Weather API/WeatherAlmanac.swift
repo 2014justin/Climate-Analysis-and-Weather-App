@@ -856,6 +856,61 @@ enum WeatherAlmanac {
         )
     }
     
+    /// Returns astronomical daylight duration for a climate site
+    static func getFormattedDaylight(
+        for location: WeatherLocation,
+        dayOfYear: Int
+    ) -> String {
+        guard (1...365).contains(dayOfYear) else {
+            return "-"
+        }
+        
+        let timeZone =
+            TimeZone(identifier: location.timeZoneIdentifier)
+            ?? .current
+        
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        
+        guard let yearStart = calendar.date(
+            from: DateComponents(
+                year: 2001,
+                month: 1,
+                day: 1
+            )
+        ),
+              let referenceDate = calendar.date(
+                byAdding: .day,
+                value: dayOfYear - 1,
+                to: yearStart
+              ) else {
+            return "-"
+        }
+        
+        switch solarDayState(
+            for: referenceDate,
+            latitude: location.latitude
+            , longitude: location.longitude,
+            timeZone: timeZone
+        ) {
+        case .normal(let sunTimes):
+            let durationSeconds = sunTimes.sunset.timeIntervalSince(sunTimes.sunrise)
+            
+            let totalMinutes =
+            Int((durationSeconds / 60.0).rounded())
+            
+            let hours = totalMinutes / 60
+            let minutes = totalMinutes % 60
+            
+            return "\(hours)h \(minutes)m"
+            
+        case .polarDay:
+            return "24h 0m"
+        case .polarNight:
+            return "0h 0m"
+        }
+    }
+    
     static func solarDayState(
         for date: Date = Date(),
         latitude: Double,

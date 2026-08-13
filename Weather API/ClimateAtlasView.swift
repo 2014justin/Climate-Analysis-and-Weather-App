@@ -35,7 +35,7 @@ struct ClimateAtlasView: View {
     @State private var displayedMetric: AtlasMapMetric = .temperature
     @State private var annotationSize: AtlasAnnotationSize = .mediumPlus
     @State private var liveSolarInstant = Date.now
-    @State private var showsSolarIllumination = false
+    @State private var showsSolarIllumination = true
     @State private var isShowingMapOptions = false
     @State private var selectedObservationID: String?
     @State private var visibleObservations:
@@ -43,8 +43,10 @@ struct ClimateAtlasView: View {
 
     @State private var isLoadingObservations = false
 
-    @State private var observationStatus =
+    @State private var observationStatusDetail =
         "Open Atlas to load live stations."
+    
+    @State private var isShowingObservationInfo = false
 
     @State private var observationSnapshot:
         AtlasObservationSnapshot?
@@ -63,6 +65,8 @@ struct ClimateAtlasView: View {
     
     /// Owns the shared 121-frame, five-day playback timeline.
     @State private var forecastTimelineController = ForecastTimelineController()
+    
+    
     
     /// Derive bounds from MapKit. Whenever visibleRegion changes, visibleBounds is recalculated from it.
     private var visibleBounds: AtlasMapBounds {
@@ -84,7 +88,7 @@ struct ClimateAtlasView: View {
             visibleObservations = []
             selectedObservationID = nil
 
-            observationStatus =
+            observationStatusDetail =
                 "All Networks loading will be added after the primary layer."
 
             return
@@ -95,7 +99,7 @@ struct ClimateAtlasView: View {
             selectedObservationID = nil
 
             if !isLoadingObservations {
-                observationStatus =
+                observationStatusDetail =
                     "Live snapshot not loaded yet."
             }
 
@@ -136,7 +140,7 @@ struct ClimateAtlasView: View {
                 ? "updated now"
                 : "\(ageMinutes)m old"
 
-        observationStatus =
+        observationStatusDetail =
             "\(snapshot.rawReportCount) worldwide reports → "
             + "\(snapshot.observations.count) live stations → "
             + "\(reducedObservations.count) shown • "
@@ -154,7 +158,7 @@ struct ClimateAtlasView: View {
 
         isLoadingObservations = true
 
-        observationStatus =
+        observationStatusDetail =
             observationSnapshot == nil
                 ? "Loading worldwide METAR snapshot..."
                 : "Refreshing worldwide METAR snapshot..."
@@ -190,12 +194,12 @@ struct ClimateAtlasView: View {
                     scope: stationScope
                 )
 
-                observationStatus +=
+                observationStatusDetail +=
                     " Refresh failed; cached data retained."
             } else {
                 visibleObservations = []
 
-                observationStatus =
+                observationStatusDetail =
                     "Station snapshot failed: "
                     + error.localizedDescription
             }
@@ -292,169 +296,97 @@ struct ClimateAtlasView: View {
         
         
         /// Entire window, arranged top-to-bottom
-        VStack(alignment: .leading, spacing: 16) {
-            /// Header, arranged left-to-right.
-            HStack {
-                ///Title block "Climate Atlas", "Point, choose, understand."
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Climate Atlas")
-                        .font(.largeTitle)
-                        .fontWeight(.semibold)
-                    
-                    Text("Point, choose, understand.")
-                        .foregroundStyle(DashboardTheme.textSecondary)
-                }
-                
-                Spacer()
-                
-                HStack(
-                    alignment: .top,
-                    spacing: 12
-                ) {
-                    VStack(
-                        alignment: .trailing,
-                        spacing: 8
-                    ) {
-                        HStack(spacing: 10) {
-                            Text("Station Scope")
-                                .font(.caption)
-                                .foregroundStyle(DashboardTheme.textSecondary)
-                                .frame(width: 90, alignment: .trailing)
+        VStack(alignment: .leading, spacing: -13) {
+            
+            VStack(spacing: 0) {
+                /// Header, arranged left-to-right.
+                HStack {
+                    ///Title block "Climate Atlas", "Point, choose, understand." Top left
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text("Climate Atlas")
+                                .font(.largeTitle)
+                                .fontWeight(.semibold)
                             
-                            Picker(
-                                "Station Scope",
-                                selection: $stationScope
-                            ) {
-                                ForEach(
-                                    AtlasStationScope.allCases
-                                ) { scope in
-                                    Text(scope.rawValue)
-                                        .tag(scope)
-                                }
+                            Button {
+                                isShowingObservationInfo.toggle()
+                            } label: {
+                                Image(systemName: "info.circle.fill")
+                                    .symbolRenderingMode(.monochrome)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(DashboardTheme.forecastTemperature)
                             }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .frame(width: 284)
-                            .onChange(
-                                of: stationScope
-                            ) { _, newScope in
-                                selectedObservationID = nil
-                                
-                                showSnapshotObservations(
-                                    from: observationSnapshot,
-                                    in: visibleBounds,
-                                    scope: newScope
-                                )
+                            .buttonStyle(.plain)
+                            
+                            .contentShape(Rectangle())
+                            
+                            /// Attach the popover directly to the info button, uses weatherLayer to
+                            /// choose between forecast status and the richer observation status,
+                            /// builds the obs panel with freshness indicator, report/station/visible counts,
+                            /// divider and update age. Wraps everything in a common VStack then applied
+                            /// padding and minimum width once.
+                            .popover(isPresented: $isShowingObservationInfo) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    if weatherLayer == .forecast {
+                                        Text(forecastStatus)
+                                            .font(.subheadline)
+                                    } else {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            HStack {
+                                                Circle()
+                                                    .fill(displayedSnapshotFreshnessColor)
+                                                    .frame(width: 8, height: 8)
+                                                Text("Atlas Status")
+                                                    .font(.headline)
+                                            }
+                                            
+                                            Group {
+                                                Text("\(observationSnapshot?.rawReportCount ?? 0) worldwide reports")
+                                                Text("\(observationSnapshot?.observations.count ?? 0) live stations")
+                                                Text("\(visibleObservations.count) currently shown")
+                                            }
+                                            .font(.subheadline)
+                                            .foregroundStyle(DashboardTheme.textSecondary)
+                                            
+                                            Divider()
+                                            
+                                            let age = observationSnapshot.map {
+                                                max(
+                                                    0, liveSolarInstant.timeIntervalSince($0.downloadedAt)
+                                                )
+                                            } ?? 0
+                                            
+                                            Text(observationSnapshot == nil ? "No snapshot loaded" :
+                                                age < 60 ? "Updated just now" :
+                                                age < 3600 ? "Updated \(Int(age / 60)) minutes ago" :
+                                                "Updated \(Int(age / 3600)) hours ago")
+                                                .font(.caption)
+                                                .foregroundStyle(DashboardTheme.textSecondary)
+                                        }
+                                    }
+                                }
+                                .padding()
+                                .frame(minWidth: 280)
                             }
                         }
                         
-                        HStack(spacing: 10) {
-                            Text("Weather layer")
-                                .font(.caption)
-                                .foregroundStyle(DashboardTheme.textSecondary)
-                                .frame(width: 90, alignment: .trailing)
-                            
-                            Picker(
-                                "Weather Layer",
-                                selection: $weatherLayer
-                            ) {
-                                ForEach(
-                                    AtlasWeatherLayer.allCases
-                                ) { layer in
-                                    Text(layer.rawValue)
-                                        .tag(layer)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .frame(width: 284)
-                            .onChange(
-                                of: weatherLayer
-                            ) { _, newLayer in
-                                selectedObservationID = nil
-                                
-                                switch newLayer {
-                                case .observations:
-                                    forecastTimelineController.pause()
-                                    
-                                case .forecast:
-                                    displayedMetric = .temperature
-                                    
-                                    Task {
-                                        await loadVisibleForecastSnapshot()
-                                    }
-                                }
-                            }
-                        }
+                        Text("Point, choose, understand.")
+                            .foregroundStyle(DashboardTheme.textSecondary)
                     }
                     
+                    Spacer()
                     
-                }
-            }
-            
-            HStack(spacing: 10) {
-                Button(
-                    weatherLayer == .forecast
-                    ? (
-                        isLoadingForecastSnapshot
-                        ? "Loading Forecast..."
-                        : "Refresh Forecasts"
-                    )
-                    : (
-                        isLoadingObservations
-                        ? "Loading Stations..."
-                        : "Refresh Live Data"
-                    )
-                ) {
-                    Task {
-                        switch weatherLayer {
-                        case .observations:
-                            await loadObservationSnapshot(forceRefresh: true)
-                            
-                        case .forecast:
-                            await loadVisibleForecastSnapshot(forceRefresh: true)
-                        }
+                    HStack(
+                        alignment: .top,
+                        spacing: 12
+                    ) {
+                        atlasDisplayControls
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    stationScope != .primary
-                    || (
-                        weatherLayer == .forecast
-                        ? isLoadingForecastSnapshot
-                        : isLoadingObservations
-                    )
-                )
-                
-                Text(
-                    weatherLayer == .forecast
-                        ? forecastStatus
-                        : observationStatus
-                )
-                .font(.subheadline)
-                .foregroundStyle(DashboardTheme.textSecondary)
-                Spacer()
-                
-                Button {
-                    isShowingMapOptions.toggle()
-                } label: {
-                    Label(
-                        "Map Options",
-                        systemImage: "gearshape"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .popover(
-                    isPresented: $isShowingMapOptions,
-                    arrowEdge: .top
-                ) {
-                    AtlasMapOptionsView(
-                        displayedMetric: $displayedMetric,
-                        annotationSize: $annotationSize,
-                        showsSolarIllumination: $showsSolarIllumination
-                    )
-                }
-                .help("Adjust Atlas display options")
+                /// Controls 'Refresh forecast' and how many stations loaded on the top left of the view.
+                refreshAction
+                    .frame(maxWidth: .infinity)
+                    .offset(y: -20)
             }
             
             ///$cameraPosition is two-way binding. The map can update the stored camera when the user moves it.
@@ -556,6 +488,7 @@ struct ClimateAtlasView: View {
                     maxWidth: .infinity,
                     maxHeight: .infinity
                 )
+            /// Map's border overlay
                 .clipShape(
                     RoundedRectangle(
                         cornerRadius: DashboardTheme.cardCornerRadius
@@ -569,9 +502,15 @@ struct ClimateAtlasView: View {
                     /// Ensures the decorative border cannot intercept map clicks or dragging.
                     .allowsHitTesting(false)
                 }
+                .overlay(alignment: .topTrailing) {
+                    mapOptionsButton
+                        .padding(12)
+                }
             
-                /// This diagnostic means center is the latitude & longitude at the middle of the screen. Span is approx how many degrees of
+                /// This diagnostic means center is the latitude & longitude at the middle of the screen.
+            /// Span is approx how many degrees of
                 /// latitude and longitude are visible. Small span means user is zoomed in.
+            /// Shows the latitude range box in the upper left of the map view
                 .overlay(alignment: .topLeading) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(
@@ -597,11 +536,18 @@ struct ClimateAtlasView: View {
                     .padding(12)
                     .allowsHitTesting(false)
                 }
-            if weatherLayer == .forecast {
-                AtlasForecastTimelineView(controller: forecastTimelineController)
-            }
+            /// Map reclaims timeline's reserved vertical space. The timeline floats over the bottom of the map.
+            /// 
+                .overlay(alignment: .bottom) {
+                    if weatherLayer == .forecast {
+                        AtlasForecastTimelineView(controller: forecastTimelineController)
+                            .frame(maxWidth: 900)
+                            .padding(.horizontal, 120)
+                            .padding(.bottom, 16)
+                    }
+                }
         }
-        .padding(20)
+        .padding(10)
         
         /// Lets the Atlas fill the whole application window.
         .frame(
@@ -648,5 +594,240 @@ struct ClimateAtlasView: View {
                 await loadObservationSnapshot()
             }
         }
+    }
+    
+    fileprivate var atlasDisplayControls: some View {
+        VStack(
+            alignment: .trailing,
+            spacing: 8
+        ) {
+            HStack(spacing: 10) {
+                Text("Station Scope")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                    .frame(width: 90, alignment: .trailing)
+                
+                Picker(
+                    "Station Scope",
+                    selection: $stationScope
+                ) {
+                    ForEach(
+                        AtlasStationScope.allCases
+                    ) { scope in
+                        Text(scope.rawValue)
+                            .tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 284)
+                .onChange(
+                    of: stationScope
+                ) { _, newScope in
+                    selectedObservationID = nil
+                    
+                    showSnapshotObservations(
+                        from: observationSnapshot,
+                        in: visibleBounds,
+                        scope: newScope
+                    )
+                }
+            }
+            
+            HStack(spacing: 10) {
+                Text("Weather Layer")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                    .frame(width: 90, alignment: .trailing)
+                
+                Picker(
+                    "Weather Layer",
+                    selection: $weatherLayer
+                ) {
+                    ForEach(AtlasWeatherLayer.allCases) { layer in
+                        Text(layer.rawValue)
+                            .tag(layer)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 284)
+                .onChange(of: weatherLayer) { _, newLayer in
+                    selectedObservationID = nil
+                    
+                    switch newLayer {
+                    case .observations:
+                        forecastTimelineController.pause()
+                        
+                    case .forecast:
+                        displayedMetric = .temperature
+                        
+                        Task {
+                            await loadVisibleForecastSnapshot()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /// Make the map options button look like the station settings on the dashboard.
+    
+    fileprivate var mapOptionsButton: some View {
+        Button {
+            isShowingMapOptions.toggle()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "gearshape.fill")
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DashboardTheme.forecastTemperature)
+                
+                Text("Map Options")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DashboardTheme.textPrimary)
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 140, height: 32)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DashboardTheme.panelElevated.opacity(0.88))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .help("Map Options")
+        .popover(
+            isPresented: $isShowingMapOptions,
+            arrowEdge: .top
+        ) {
+            AtlasMapOptionsView(
+                displayedMetric: $displayedMetric,
+                annotationSize: $annotationSize,
+                showsSolarIllumination: $showsSolarIllumination
+            )
+        }
+    }
+    
+    /// Display the timestamp.
+    fileprivate var displayedSnapshotTimestamp: Date? {
+        switch weatherLayer {
+        case .observations:
+            observationSnapshot?.downloadedAt
+        case .forecast:
+            forecastSnapshot?.loadedAt
+        }
+    }
+    
+    /// Freshness color. How stale or fresh are these observations?
+    fileprivate var displayedSnapshotFreshnessColor: Color {
+        guard let timestamp = displayedSnapshotTimestamp else {
+            return DashboardTheme.failure
+        }
+        
+        let age = max(
+            0, liveSolarInstant.timeIntervalSince(timestamp)
+        )
+        /// Data age in seconds
+        switch age {
+        case ..<300:
+            return DashboardTheme.success
+            
+        case ..<900:
+            return .yellow
+            
+        default:
+            return DashboardTheme.failure
+        }
+    }
+    
+    fileprivate var refreshAction: some View {
+        Button {
+            Task {
+                switch weatherLayer {
+                case .observations:
+                    await loadObservationSnapshot(forceRefresh: true)
+                case .forecast:
+                    await loadVisibleForecastSnapshot(forceRefresh: true)
+                }
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(displayedSnapshotFreshnessColor)
+                    .frame(width: 8, height: 8)
+                    .shadow(
+                        color:
+                            displayedSnapshotFreshnessColor
+                                .opacity(0.45),
+                        radius: 3
+                    )
+                    .frame(
+                        maxWidth: .infinity,
+                        alignment: .leading
+                    )
+                    .padding(.leading, 12)
+                    .accessibilityLabel("Data freshness")
+
+                HStack(spacing: 7) {
+                    Image(
+                        systemName:
+                            "arrow.trianglehead.2.clockwise.rotate.90"
+                    )
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(
+                        DashboardTheme.forecastTemperature
+                    )
+
+                    Text(
+                        weatherLayer == .forecast
+                            ? "Refresh Forecast"
+                            : "Refresh Live Data"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(
+                        DashboardTheme.textPrimary
+                    )
+                }
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(
+            width: 220,
+            height: 32
+        )
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DashboardTheme.panelElevated.opacity(0.88))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .contentShape(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .help(
+            weatherLayer == .forecast
+            ? "Refresh visible forecasts"
+            : "Refresh live stations observations"
+        )
+        .disabled(stationScope != .primary ||
+                  (weatherLayer == .forecast ? isLoadingForecastSnapshot : isLoadingObservations))
     }
 }

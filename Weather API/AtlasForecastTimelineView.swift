@@ -39,7 +39,7 @@ struct AtlasForecastTimelineView: View {
     }
     
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading) {
             HStack {
                 Text("Forecast Timeline")
                     .font(.headline)
@@ -115,7 +115,7 @@ struct AtlasForecastTimelineView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(
-            DashboardTheme.panel,
+            .regularMaterial,
             in: RoundedRectangle(
                 cornerRadius: DashboardTheme.cardCornerRadius,
                 style: .continuous
@@ -131,5 +131,11 @@ struct AtlasForecastTimelineView: View {
                 lineWidth: 1
             )
         }
+        .shadow(
+            color: .black.opacity(0.32),
+            radius: 18,
+            x: 0,
+            y: 8
+        )
     }
 }

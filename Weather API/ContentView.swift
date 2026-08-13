@@ -1864,56 +1864,63 @@ struct ContentView: View {
         .frame(width: 365)
     }
     
-    /// Dashboard controls that live beneath the left information cards.
+    /// Dashboard controls that live beneath the left information cards. Specifically
+    /// for forecast discussion & Climate graphs
     private var dashboardActionButtons: some View {
         VStack(
             alignment: .leading,
             spacing: 8
         ) {
-            Button {
-                selectedClimateGraph =
-                    .annualTemperatureCurve
-
-                activeClimateGraph =
-                    .annualTemperatureCurve
-            } label: {
-                exploreActionLabel(
-                    title: "Climate Graphs",
-                    subtitle: "Seasonal curves & weather year",
-                    symbol: "chart.line.uptrend.xyaxis",
-                    accent: DashboardTheme.forecastTemperature,
-                    trailingSymbol: "chevron.right"
-                )
-            }
-            .buttonStyle(.plain)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: 48,
-                maxHeight: 48
-            )
-            .help("Open Climate Graphs")
-            .accessibilityLabel("Open Climate Graphs")
-            
-            Button {
-                Task {
-                    await loadForecastDiscussion()
+            HStack(spacing: 7) {
+                /// Climate Graphs
+                Button {
+                    selectedClimateGraph =
+                        .annualTemperatureCurve
+                    
+                    activeClimateGraph =
+                        .annualTemperatureCurve
+                } label: {
+                    exploreActionLabel(
+                        title: "Climate Graphs",
+                        subtitle: "Seasonal curves",
+                        symbol: "chart.line.uptrend.xyaxis",
+                        accent: DashboardTheme.forecastTemperature,
+                        trailingSymbol: "chevron.right"
+                    )
                 }
-            } label: {
-                exploreActionLabel(
-                    title:
-                        isLoadingForecastDiscussion
-                            ? "Loading Discussion..."
-                            : "Forecast Discussion",
-                    subtitle: "Technical forecast outlook",
-                    symbol: "text.bubble",
-                    accent: DashboardTheme.dayGlow,
-                    trailingSymbol: "chevron.right"
-                )
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .frame(height: 55)
+                
+                .help("Open Climate Graphs")
+                .accessibilityLabel("Open Climate Graphs")
+                
+                /// Forecast Discussion
+                Button {
+                    Task {
+                        await loadForecastDiscussion()
+                    }
+                } label: {
+                    exploreActionLabel(
+                        title:
+                            isLoadingForecastDiscussion
+                        ? "Loading Discussion..."
+                        : "Forecast Discussion",
+                        subtitle: "Technical discussion",
+                        symbol: "text.bubble",
+                        accent: DashboardTheme.dayGlow,
+                        trailingSymbol: "chevron.right"
+                    )
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .frame(height: 55)
+                
+                .disabled(isLoadingForecastDiscussion)
             }
-            .buttonStyle(.plain)
-            .disabled(isLoadingForecastDiscussion)
+            .padding(.top, -8)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 4)
         .frame(
             width: 365,
             alignment: .leading
@@ -1955,12 +1962,13 @@ struct ContentView: View {
                     .foregroundStyle(
                         DashboardTheme.textPrimary
                     )
-
+                    .minimumScaleFactor(0.8)
                 Text(subtitle)
                     .font(.caption2)
                     .foregroundStyle(
                         DashboardTheme.textSecondary
                     )
+                    .minimumScaleFactor(0.8)
             }
 
             Spacer(minLength: 8)
@@ -3736,6 +3744,8 @@ struct ContentView: View {
         
         
         
+        
+        
         return VStack(alignment: .leading, spacing: 8) {
             
             ForecastNormalComparisonView(
@@ -3747,6 +3757,7 @@ struct ContentView: View {
                 latitude: selectedLocation.latitude,
                 longitude: selectedLocation.longitude,
                 timeZone: selectedLocation.timeZone
+                
             )
             
             VStack(
@@ -3754,9 +3765,20 @@ struct ContentView: View {
                 spacing: 8
             ) {
                 solarMetricRow(
+                    label: "Daylight Hours",
+                    symbol: "sun.max.fill",
+                    symbolColor: .yellow.opacity(0.90),
+                    value: WeatherAlmanac.getFormattedDaylight(
+                        for: selectedLocation,
+                        dayOfYear: Int(selectedLocationReferenceDayOfYear)
+                    ),
+                    unit: ""
+                )
+                
+                solarMetricRow(
                     label: "Daily Solar Energy",
                     symbol: "sun.max.fill",
-                    symbolColor: .orange,
+                    symbolColor: .orange.opacity(0.90),
                     value: String(
                         format: "%.2f",
                         solarEnergy
@@ -3869,6 +3891,7 @@ struct ContentView: View {
                 }
             }
 
+            /// Present temperature now displayed on the temperature graph.
             ForEach(dailyTemperatureHighlights) { point in
                 PointMark(
                     x: .value("Time", point.timestamp),
@@ -3879,6 +3902,22 @@ struct ContentView: View {
                 .annotation(position: .top) {
                     Text("\(Int(point.temperatureFahrenheit.rounded()))")
                 }
+            }
+            
+            /// current real-time indicator
+            if let currentPoint = temperatureHistory.last {
+                PointMark(
+                    x: .value("Time", currentPoint.timestamp),
+                    y: .value("Temperature", currentPoint.temperatureFahrenheit)
+                )
+                .foregroundStyle(.red)
+                .symbolSize(90)
+                
+                .annotation(position: .top) {
+                    Text("\(Int(currentPoint.temperatureFahrenheit))")
+                        .padding(5)
+                }
+                
             }
             
             if let selectedTemperaturePoint {
@@ -4209,7 +4248,7 @@ struct ContentView: View {
                 AppSectionPicker(
                     selection: $selectedAppSection
                 )
-                .padding(.top, 14)
+                .padding(.top, 1)
             }
             /// Load saved stations and automatically refresh the default built-in station
             .task {

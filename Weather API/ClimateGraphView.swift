@@ -2296,6 +2296,13 @@ struct ClimateGraphView: View {
                                      .foregroundStyle(DashboardTheme.chartGridMajor)
                                      .lineStyle(StrokeStyle(lineWidth: 0.65))
                              }
+            
+            /// Special highlight for the freezing point 32 F
+            if annualTemperatureOptions.showFreezeLine {
+                RuleMark(y: .value("Freezing Point", 32.0))
+                    .foregroundStyle(Color.blue.opacity(0.60))
+                    .lineStyle(StrokeStyle(lineWidth: 1.0, dash: [5, 5]))
+            }
             /// Monthly guides, drawn more subtly than temperature guides.
             ForEach(
                 [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 365],
@@ -2415,7 +2422,8 @@ struct ClimateGraphView: View {
                 .foregroundStyle(.blue)
                 .symbolSize(70)
                 .annotation(
-                    position: selectedClimatePoint.dayOfYear >= 310 ? .leading : .trailing,
+                    // Oct 11 change to make sure user can see the correct data.
+                    position: selectedClimatePoint.dayOfYear >= 284 ? .leading : .trailing,
                     alignment: .center
                 ) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -2431,6 +2439,7 @@ struct ClimateGraphView: View {
                         Text(
                             "Normal High: \(selectedClimatePoint.normalHigh, specifier: "%.1f") °F"
                         )
+
 
                         if annualTemperatureOptions
                             .showsStandardDeviationInHover,
@@ -2608,6 +2617,33 @@ struct ClimateGraphView: View {
         seasonalHysteresisPlot
     }
     
+    
+    /// Horizontal temperature gridlines aligned to multiples of 10 °F.
+    private var hysteresisTemperatureGridValues: [Double] {
+        let firstValue =
+            ceil(
+                hysteresisTemperatureDomain.lowerBound / 10.0
+            ) * 10.0
+
+        return Array(
+            stride(
+                from: firstValue,
+                through: hysteresisTemperatureDomain.upperBound,
+                by: 10.0
+            )
+        )
+    }
+
+    /// Vertical normalized-solar gridlines.
+    private let hysteresisSolarGridValues: [Double] =
+        Array(
+            stride(
+                from: 0.0,
+                through: 1.0,
+                by: 0.2
+            )
+        )
+    
     /// Add the seasonal hysteresis phase space with arrow seasonal progression
     private var seasonalHysteresisPlot: some View {
         Chart {
@@ -2697,7 +2733,47 @@ struct ClimateGraphView: View {
                         .foregroundStyle(.green)
                         .rotationEffect(hysteresisArrowAngle(for: point.dayOfYear))
                 }
+                
             }
+            
+            /// Horizontal temperature guides.
+            ForEach(
+                hysteresisTemperatureGridValues,
+                id: \.self
+            ) { temperature in
+                RuleMark(
+                    y: .value(
+                        "Temperature Grid",
+                        temperature
+                    )
+                )
+                .foregroundStyle(
+                    Color.white.opacity(0.10)
+                )
+                .lineStyle(
+                    StrokeStyle(lineWidth: 0.65)
+                )
+            }
+
+            /// Vertical normalized-solar guides.
+            ForEach(
+                hysteresisSolarGridValues,
+                id: \.self
+            ) { normalizedSolar in
+                RuleMark(
+                    x: .value(
+                        "Solar Grid",
+                        normalizedSolar
+                    )
+                )
+                .foregroundStyle(
+                    Color.white.opacity(0.08)
+                )
+                .lineStyle(
+                    StrokeStyle(lineWidth: 0.65)
+                )
+            }
+            
             PointMark(
                 x: .value("Normalized Solar", -0.12),
                 y: .value("Normal Low", hysteresisTemperatureDomain.upperBound)
@@ -2802,31 +2878,24 @@ struct ClimateGraphView: View {
         /// Make it so that the Y axis goes from base 10 below the minimum temp and above the max temp.
         .chartYAxis {
             AxisMarks(
-                position: .trailing,
+                position: .automatic,
                 values: .stride(by: 10)
             ) { _ in
-                AxisGridLine(
-                    stroke: StrokeStyle(
-                        lineWidth: 0.7
-                    )
-                )
-                .foregroundStyle(Color.white.opacity(0.08))
+                
+                
                 
                 AxisTick()
-                    .foregroundStyle(Color.white.opacity(0.24))
+                    .foregroundStyle(Color.white.opacity(0.10))
                 
                 AxisValueLabel()
-                    .foregroundStyle(DashboardTheme.textSecondary)
+                    .foregroundStyle(DashboardTheme.textPrimary)
             }
         }
         .chartXAxis {
             AxisMarks(
                 values: Array(stride(from: 0.00, through: 1.00, by: 0.20))
             ) { _ in
-                AxisGridLine(
-                    stroke: StrokeStyle(lineWidth: 0.7)
-                )
-                .foregroundStyle(Color.white.opacity(0.07))
+                
                 
                 AxisTick()
                     .foregroundStyle(Color.white.opacity(0.24))

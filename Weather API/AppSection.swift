@@ -22,6 +22,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
 }
 
 struct AppSectionPicker: View {
+    static let controlWidth: CGFloat = 278
     /// Binding means this picker does now own the selection. It receives a two-way connection to the
     /// selection owned by ContentView. When the picker changes it, ContentView sees the change immediately
     @Binding var selection: AppSection
