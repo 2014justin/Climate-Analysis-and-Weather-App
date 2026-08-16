@@ -18,9 +18,27 @@ nonisolated enum AtlasWeatherLayer: String, CaseIterable, Identifiable, Hashable
 enum AtlasMapMetric: String, CaseIterable, Identifiable, Hashable {
     case temperature = "Temperature"
     case dewPoint = "Dew Point"
+    case rolling24HourMaximum = "24h Daily Maximum"
+    case rolling24HourMinimum = "24h Daily Minimum"
     
     var id: Self {
         self
+    }
+    
+    var systemImage: String {
+        switch self {
+        case .temperature:
+            return "thermometer.medium"
+            
+        case .dewPoint:
+            return "drop.fill"
+            
+        case .rolling24HourMaximum:
+            return "arrow.up.circle"
+            
+        case .rolling24HourMinimum:
+            return "arrow.down.circle"
+        }
     }
 }
 
@@ -68,11 +86,14 @@ struct AtlasMapOptionsView: View {
                     selection: $displayedMetric
                 ) {
                     ForEach(AtlasMapMetric.allCases) { metric in
-                        Text(metric.rawValue)
-                            .tag(metric)
+                        Label(
+                            metric.rawValue,
+                            systemImage: metric.systemImage
+                        )
+                        .tag(metric)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.radioGroup)
                 .labelsHidden()
             }
             

@@ -1,5 +1,10 @@
 /// Find the newest bulletin for each Meteocode product, download it,
 /// and pass the XML into the parser.
+///
+/// Scans the HTML directory dd.weather.gc.ca/today/meteocode/(feed)/cml and on 404
+/// falls back to the previous UTC day archive.
+///
+/// Calls the forecast parser at ECCCMeteocodeDatamartService (line 581)
 
 import Foundation
 

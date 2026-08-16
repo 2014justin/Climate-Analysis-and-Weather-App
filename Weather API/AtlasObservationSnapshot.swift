@@ -9,3 +9,15 @@ struct AtlasObservationSnapshot: Sendable {
     let downloadedAt: Date
     let rawReportCount: Int
 }
+/// Converts the provider-facing Atlas observations into the compact, provider-agnostic samples retained by the rolling avg.
+extension AtlasObservationSnapshot {
+    var temperatureHistorySamples: [AtlasTemperatureHistorySample] {
+        observations.map { observation in
+            AtlasTemperatureHistorySample(
+                stationID: observation.station.id,
+                observedAt: observation.observedAt,
+                temperatureFahrenheit: observation.temperatureFahrenheit
+            )
+        }
+    }
+}

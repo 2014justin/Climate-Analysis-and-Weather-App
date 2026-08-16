@@ -2,7 +2,7 @@ import Foundation
 
 /// Convert Celsius to Fahrenheit
 
-enum WeatherMath {
+nonisolated enum WeatherMath {
     static func celsiusToFahrenheit(_ celsius: Double) -> Double {
         return (celsius * 9.0 / 5.0) + 32.0
     }

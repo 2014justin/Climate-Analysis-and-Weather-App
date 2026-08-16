@@ -86,7 +86,7 @@ extension ChartsHelpInfo {
 extension ChartsHelpInfo {
     
     /// Turns source-code line wrapping into naturally flowing prose while preserving
-    /// intentionally-blank lines between paragraphs.
+    /// intentionally-blank lines between paragraphs. Functions kind of like a function.
     struct Prose: View {
         private let content: String
         
@@ -100,7 +100,8 @@ extension ChartsHelpInfo {
                 }
                 .joined(separator: "\n\n")
         }
-        
+        /// Output of Prose is not a "nice text" - it is a rendered view. With a width rule
+        /// and a don't truncate me rul.
         var body: some View {
             Text(content)
                 .frame(

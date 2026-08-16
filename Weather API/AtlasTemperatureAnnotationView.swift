@@ -9,8 +9,10 @@ struct AtlasTemperatureAnnotationView: View {
     let annotationSize: AtlasAnnotationSize
     
     let weatherLayer: AtlasWeatherLayer
-    
+    let rollingTemperatureExtrema: AtlasRollingTemperatureExtrema?
     let forecastTemperatureFahrenheit: Double?
+    
+    
     
     private var displayedValue: Double? {
         switch weatherLayer {
@@ -23,6 +25,11 @@ struct AtlasTemperatureAnnotationView: View {
                 return observation.temperatureFahrenheit
             case .dewPoint:
                 return observation.dewPointFahrenheit
+            case .rolling24HourMaximum:
+                return rollingTemperatureExtrema?.maximumTemperatureFahrenheit
+                
+            case .rolling24HourMinimum:
+                return rollingTemperatureExtrema?.minimumTemperatureFahrenheit
             }
         }
     }

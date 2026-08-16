@@ -48,11 +48,22 @@ struct ClimateAtlasView: View {
     
     @State private var isShowingObservationInfo = false
 
-    @State private var observationSnapshot:
-        AtlasObservationSnapshot?
+    @State private var observationSnapshot: AtlasObservationSnapshot?
 
-    @State private var snapshotStore =
-        AviationWeatherSnapshotStore()
+    @State private var snapshotStore = AviationWeatherSnapshotStore()
+    
+    @State private var temperatureHistoryStore = AtlasTemperatureHistoryStore()
+    
+    private let temperatureHistoryService = AviationWeatherTemperatureHistoryService()
+    
+    @State private var temperatureHistoryRequestedStationIDs: Set<String> = []
+    
+    /// Dictionary would look like
+    /// [
+    ///     "KDEN": denverExtrema,
+    ///     "CYEG": edmontonExtrema
+    /// ]
+    @State private var temperatureExtremaByStationID: [String: AtlasRollingTemperatureExtrema] = [:]
     
     /// Provider-agnostic forecasts loaded for the current visible station set.
     @State private var forecastSnapshot: AtlasForecastSnapshot?
@@ -79,7 +90,168 @@ struct ClimateAtlasView: View {
     }
     
     @MainActor
-    private func showSnapshotObservations(
+    fileprivate func refreshVisibleTemperatureExtrema(
+        endingAt windowEnd: Date = .now
+    ) async {
+        let requestedStationIDs = visibleObservations.map(\.id)
+        
+        guard requestedStationIDs.isEmpty == false else {
+            temperatureExtremaByStationID = [:]
+            return
+        }
+        
+        let results = await temperatureHistoryStore
+            .rollingExtrema(for: requestedStationIDs, endingAt: windowEnd)
+        
+        // Avoid publishing results from an old mapviewport if the user moved the map
+        // while this actor request was suspended.
+        guard Set(visibleObservations.map(\.id)) == Set(requestedStationIDs) else {
+            return
+        }
+        
+        temperatureExtremaByStationID = results
+        
+    }
+    
+    @MainActor
+    fileprivate func loadVisibleTemperatureHistory() async {
+        // Preserve namespaced IDs inside the provider-agnostic history store,
+        // but translate them to plain ICAO IDs at the network boundary.
+        var aviationIDByNamespacedID: [String: String] = [:]
+
+        for observation in visibleObservations {
+            let source = observation.station.source
+
+            guard source.providerID == "aviationWeather" else {
+                continue
+            }
+
+            let aviationID = source.stationID
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased()
+
+            guard aviationID.isEmpty == false else {
+                continue
+            }
+
+            aviationIDByNamespacedID[observation.id] =
+                aviationID
+        }
+
+        let visibleNamespacedIDs =
+            Set(aviationIDByNamespacedID.keys)
+
+        let newNamespacedIDs = visibleNamespacedIDs
+            .subtracting(
+                temperatureHistoryRequestedStationIDs
+            )
+            .sorted()
+
+        guard newNamespacedIDs.isEmpty == false else {
+            await refreshVisibleTemperatureExtrema()
+            return
+        }
+
+        temperatureHistoryRequestedStationIDs
+            .formUnion(newNamespacedIDs)
+
+        let batchSize =
+            AviationWeatherTemperatureHistoryService
+                .maximumStationCount
+
+        for batchStart in stride(
+            from: 0,
+            to: newNamespacedIDs.count,
+            by: batchSize
+        ) {
+            let batchEnd = min(
+                batchStart + batchSize,
+                newNamespacedIDs.count
+            )
+
+            let namespacedBatch = Array(
+                newNamespacedIDs[batchStart..<batchEnd]
+            )
+
+            var aviationIDs: [String] = []
+            var namespacedIDByAviationID:
+                [String: String] = [:]
+
+            for namespacedID in namespacedBatch {
+                guard let aviationID =
+                        aviationIDByNamespacedID[
+                            namespacedID
+                        ] else {
+                    continue
+                }
+
+                aviationIDs.append(aviationID)
+
+                namespacedIDByAviationID[aviationID] =
+                    namespacedID
+            }
+
+            do {
+                let providerSamples =
+                    try await temperatureHistoryService
+                        .fetchPrevious24Hours(
+                            for: aviationIDs
+                        )
+                
+                let namespacedSamples: [AtlasTemperatureHistorySample] =
+                    providerSamples.compactMap {
+                        sample -> AtlasTemperatureHistorySample? in
+
+                        guard let namespacedID =
+                                namespacedIDByAviationID[
+                                    sample.stationID
+                                ] else {
+                            return nil
+                        }
+
+                        return AtlasTemperatureHistorySample(
+                            stationID: namespacedID,
+                            observedAt: sample.observedAt,
+                            temperatureFahrenheit:
+                                sample.temperatureFahrenheit
+                        )
+                    }
+                
+                #if DEBUG
+                print(
+                    "Atlas history loaded "
+                    + "\(namespacedSamples.count) reports for "
+                    + "\(aviationIDs)"
+                )
+                #endif
+                
+                await temperatureHistoryStore.ingest(
+                    namespacedSamples,
+                    referenceDate: Date.now
+                )
+
+                await refreshVisibleTemperatureExtrema()
+                
+                #if DEBUG
+                print(
+                    "Rolling extrema available for "
+                    + "\(temperatureExtremaByStationID.count) visible stations."
+                )
+                #endif
+            } catch {
+                temperatureHistoryRequestedStationIDs
+                    .subtract(namespacedBatch)
+
+                print(
+                    "Atlas temperature-history batch failed "
+                    + "for \(aviationIDs): \(error)"
+                )
+            }
+        }
+    }
+    
+    @MainActor
+    fileprivate func showSnapshotObservations(
         from snapshot: AtlasObservationSnapshot?,
         in bounds: AtlasMapBounds,
         scope: AtlasStationScope
@@ -174,25 +346,36 @@ struct ClimateAtlasView: View {
                 )
 
             observationSnapshot = snapshot
+            
+            await temperatureHistoryStore.ingest(
+                snapshot.temperatureHistorySamples,
+                referenceDate: snapshot.downloadedAt
+            )
 
             showSnapshotObservations(
                 from: snapshot,
                 in: visibleBounds,
                 scope: stationScope
             )
+            await loadVisibleTemperatureHistory()
         } catch {
             if let cachedSnapshot =
                     await snapshotStore
                         .cachedSnapshot() {
 
-                observationSnapshot =
-                    cachedSnapshot
+                observationSnapshot = cachedSnapshot
+                
+                await temperatureHistoryStore.ingest(
+                    cachedSnapshot.temperatureHistorySamples,
+                    referenceDate: cachedSnapshot.downloadedAt
+                )
 
                 showSnapshotObservations(
                     from: cachedSnapshot,
                     in: visibleBounds,
                     scope: stationScope
                 )
+                await loadVisibleTemperatureHistory()
 
                 observationStatusDetail +=
                     " Refresh failed; cached data retained."
@@ -419,6 +602,8 @@ struct ClimateAtlasView: View {
                                 displayedMetric: displayedMetric,
                                 annotationSize: annotationSize,
                                 weatherLayer: weatherLayer,
+                                rollingTemperatureExtrema:
+                                    temperatureExtremaByStationID[observation.id],
                                 forecastTemperatureFahrenheit:
                                     forecastTemperatureFahrenheit(
                                         for: observation,
@@ -483,6 +668,8 @@ struct ClimateAtlasView: View {
                         in: newBounds,
                         scope: stationScope,
                     )
+                    
+                    Task { await loadVisibleTemperatureHistory() }
                 }
                 .frame(
                     maxWidth: .infinity,
@@ -631,6 +818,8 @@ struct ClimateAtlasView: View {
                         in: visibleBounds,
                         scope: newScope
                     )
+                    
+                    Task { await loadVisibleTemperatureHistory() }
                 }
             }
             

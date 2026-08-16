@@ -1,3 +1,7 @@
+/// Answers "What does it forecast?
+/// The heavy parser: full XMLParserDelegate state machine producing an ECCCMeteocodeForecastDocument
+/// metadata plus per region, the air temperature and dew point <temperature-list>
+ 
 import Foundation
 
 nonisolated enum ECCCMeteocodeForecastXMLParserError: LocalizedError, Sendable {

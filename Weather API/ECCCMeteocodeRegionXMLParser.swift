@@ -1,3 +1,9 @@
+/// Answers "What region does this bulletin cover?"
+/// Parses only the location blocks of a bulletin XML: msx-zone-code + msc zone-name and the document.
+/// Output [ECCCMeteocodeRegionDescriptor] = (feed, bulletinCode, regionCode, englishName, frenchName). No temperatures.
+/// Strict guards: missing title, a location missing code/name, a region code defined twice with conflicting names
+/// How the app learns which bulletin covers which region.
+
 import Foundation
 
 nonisolated enum ECCCMeteocodeRegionXMLParserError: LocalizedError, Sendable {
