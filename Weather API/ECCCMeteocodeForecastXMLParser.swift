@@ -144,12 +144,19 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
     
     /// Regional forecast state
     fileprivate var isInsideMeteocodeForecast = false
+    fileprivate struct ParsedLocation {
+        let regionCode: String
+        let englishName: String?
+        let frenchName: String?
+    }
+    
     fileprivate var isInsideLocation = false
     
     fileprivate var currentNameLanguage: String?
-    fileprivate var currentRegionCode: String?
-    fileprivate var currentEnglishName: String?
-    fileprivate var currentFrenchName: String?
+    fileprivate var currentLocationRegionCode: String?
+    fileprivate var currentLocationEnglishName: String?
+    fileprivate var currentLocationFrenchName: String?
+    fileprivate var currentLocations: [ParsedLocation] = []
     
     fileprivate var currentAirTemperatures: [ECCCMeteocodeTemperatureReading] = []
     
@@ -187,9 +194,10 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
         case "meteocode-forecast":
             isInsideMeteocodeForecast = true
             
-            currentRegionCode = nil
-            currentEnglishName = nil
-            currentFrenchName = nil
+            currentLocationRegionCode = nil
+            currentLocationEnglishName = nil
+            currentLocationFrenchName = nil
+            currentLocations.removeAll(keepingCapacity: true)
             
             currentAirTemperatures.removeAll(keepingCapacity: true)
             
@@ -201,9 +209,9 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
             }
             
             isInsideLocation = true
-            currentRegionCode = nil
-            currentEnglishName = nil
-            currentFrenchName = nil
+            currentLocationRegionCode = nil
+            currentLocationEnglishName = nil
+            currentLocationFrenchName = nil
             
         case "msc-zone-name":
             guard isInsideLocation else {
@@ -343,7 +351,7 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
         case "msc-zone-code":
             if isInsideLocation,
                !value.isEmpty {
-                currentRegionCode = value
+                currentLocationRegionCode = value
             }
             
         case "msc-zone-name":
@@ -351,9 +359,9 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
                !value.isEmpty {
                 switch currentNameLanguage {
                 case "en":
-                    currentEnglishName = value
+                    currentLocationEnglishName = value
                 case "fr":
-                    currentFrenchName = value
+                    currentLocationFrenchName = value
                     
                 default:
                     break
@@ -382,8 +390,12 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
             currentTemperatureListKind = nil
             
         case "location":
+            appendCurrentLocation()
             isInsideLocation = false
             currentNameLanguage = nil
+            currentLocationRegionCode = nil
+            currentLocationEnglishName = nil
+            currentLocationFrenchName = nil
             
         case "meteocode-forecast":
             if isInsideMeteocodeForecast {
@@ -450,17 +462,44 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
         }
     }
     
-    /// Validates the zone code, requires an actual air-temperature timeline. Sorts reading chronologically, detects
-    /// conflicting duplicate regions, stores the completed region, clears all temporary regional state through defer.
+    /// Captures one coded location, requires an actual air-temperature timeline,
+    /// sorts readings chronologically, detects conflicting duplicate regions,
+    /// and clears all temporary regional state through defer.
+    fileprivate func appendCurrentLocation() {
+        guard validationError == nil else {
+            return
+        }
+        
+        guard let rawRegionCode = currentLocationRegionCode else {
+            return
+        }
+        
+        let regionCode =
+            rawRegionCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !regionCode.isEmpty else {
+            return
+        }
+        
+        currentLocations.append(
+            ParsedLocation(
+                regionCode: regionCode,
+                englishName: currentLocationEnglishName,
+                frenchName: currentLocationFrenchName
+            )
+        )
+    }
+    
     fileprivate func appendCurrentRegion() {
         defer {
             isInsideMeteocodeForecast = false
             isInsideLocation = false
             
-            currentRegionCode = nil
-            currentEnglishName = nil
-            currentFrenchName = nil
+            currentLocationRegionCode = nil
+            currentLocationEnglishName = nil
+            currentLocationFrenchName = nil
             currentNameLanguage = nil
+            currentLocations.removeAll(keepingCapacity: true)
             
             currentAirTemperatures.removeAll(keepingCapacity: true)
             
@@ -473,43 +512,44 @@ ECCCMeteocodeForecastXMLParserDelegate: NSObject, XMLParserDelegate {
             return
         }
         
-        guard let rawRegionCode = currentRegionCode else {
-            validationError = .incompleteRegion
-            return
-        }
-        
-        let regionCode =
-            rawRegionCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        guard !regionCode.isEmpty else {
-            validationError = .incompleteRegion
-            return
-        }
-        
         /// Ignore a region that contains no usable air-temperature timeline.
         guard !currentAirTemperatures.isEmpty else {
             return
         }
-        
-        let region = ECCCMeteocodeRegionForecast(
-            regionCode: regionCode,
-            englishName: currentEnglishName,
-            frenchName: currentFrenchName,
-            airTemperatures: currentAirTemperatures.sorted {
-                $0.validStart < $1.validStart
-            },
-            dewPoints: currentDewPoints.sorted {
-                $0.validStart < $1.validStart
-            }
-        )
-        
-        if let existingRegion = regionsByCode[regionCode],
-           existingRegion != region {
-            validationError = .duplicateRegionCode(regionCode)
+
+        /// Some ECCC bulletins include a metadata-only location without a
+        /// zone code alongside the coded locations sharing its parameters.
+        /// Such a location is not selectable, but it must not invalidate the
+        /// usable coded forecasts in the same bulletin block.
+        guard !currentLocations.isEmpty else {
             return
         }
+
+        let sortedAirTemperatures = currentAirTemperatures.sorted {
+            $0.validStart < $1.validStart
+        }
         
-        regionsByCode[regionCode] = region
+        let sortedDewPoints = currentDewPoints.sorted {
+            $0.validStart < $1.validStart
+        }
+        
+        for location in currentLocations {
+            let region = ECCCMeteocodeRegionForecast(
+                regionCode: location.regionCode,
+                englishName: location.englishName,
+                frenchName: location.frenchName,
+                airTemperatures: sortedAirTemperatures,
+                dewPoints: sortedDewPoints
+            )
+            
+            if let existingRegion = regionsByCode[location.regionCode],
+               existingRegion != region {
+                validationError = .duplicateRegionCode(location.regionCode)
+                return
+            }
+            
+            regionsByCode[location.regionCode] = region
+        }
         
     }
     

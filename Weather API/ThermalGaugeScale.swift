@@ -48,11 +48,13 @@ nonisolated struct ThermalGaugeScale: Equatable, Sendable {
         && rawUpperBoundFahrenheit
         > rawLowerBoundFahrenheit
         
+        /// If the station has legit lower bound (2 std deviations) use that. If not, -20 F is our default
         let resolvedRawLower =
         hasValidRawBounds
             ? rawLowerBoundFahrenheit
             : -20.0
         
+        /// Likewise for midsommar temperatures.
         let resolvedRawUpper =
         hasValidRawBounds
             ? rawUpperBoundFahrenheit
@@ -69,7 +71,7 @@ nonisolated struct ThermalGaugeScale: Equatable, Sendable {
             
             roundedLower =
             floor(
-                (roundedLower - missingSpan / 2.0)
+            (roundedLower - missingSpan / 2.0)
                 / validIncrement
             ) * validIncrement
             

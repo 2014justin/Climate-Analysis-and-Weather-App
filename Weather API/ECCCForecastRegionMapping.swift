@@ -297,6 +297,70 @@ where Element == ECCCForecastRegion {
     }
 }
 
+extension ECCCForecastRegion {
+    /// Returns the same geographic region with additional Meteocode products.
+    ///
+    /// Some ECCC station forecasts are assembled from products whose geographic
+    /// names do not exactly match the public forecast-zone geometry. Keeping
+    /// the compatibility product on the resolved region lets the normal
+    /// document selector and merger handle the resulting timeline.
+    nonisolated func addingProducts(
+        _ additionalProducts: [ECCCMeteocodeRegionProduct]
+    ) -> ECCCForecastRegion {
+        let mergedProducts = Array(
+            Set(products + additionalProducts)
+        )
+            .sorted { $0.id < $1.id }
+        
+        return ECCCForecastRegion(
+            feed: feed,
+            identity: identity,
+            name: name,
+            products: mergedProducts
+        )
+    }
+}
+
+/// Station-specific compatibility between ECCC's public forecast-zone
+/// geometry and the short-range Meteocode regions used by some stations.
+///
+/// This is deliberately keyed by station identifier and resolved region. A
+/// broad public zone such as Okanagan Valley must not receive the South
+/// Okanagan short-range product for every station inside that zone.
+nonisolated enum ECCCForecastProductCompatibility {
+    static func supplementalProducts(
+        for stationIdentifier: String?,
+        resolvedRegion: ECCCForecastRegion
+    ) -> [ECCCMeteocodeRegionProduct] {
+        let normalizedStationIdentifier = stationIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+        
+        let okanaganValleyIdentity = ECCCForecastZoneIdentity(
+            englishName: "Okanagan Valley",
+            frenchName: nil
+        )
+        
+        guard normalizedStationIdentifier == "CWYY",
+              resolvedRegion.feed == .pyr,
+              okanaganValleyIdentity.matches(resolvedRegion.identity)
+        else {
+            return []
+        }
+        
+        // CWYY is in ECCC's South Okanagan short-range region. The public
+        // geometry resolves it to the broader Okanagan Valley region, whose
+        // FPVR52:r8 product starts later and therefore leaves a visible gap
+        // unless FPVR13:r83 is stitched in first.
+        return [
+            ECCCMeteocodeRegionProduct(
+                bulletinCode: "FPVR13",
+                regionCode: "r83"
+            )
+        ]
+    }
+}
+
 extension ECCCForecastZoneGeometry {
     
     /// Joins this zone's validated polygons to its aggregated

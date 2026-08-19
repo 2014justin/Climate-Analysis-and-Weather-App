@@ -4709,6 +4709,13 @@ struct ContentView: View {
         isLoading = true
         weatherRefreshState = .refreshing
         
+        let requestLocation = selectedLocation
+        let requestedDurationHours = selectedHistoryDuration.rawValue
+        let refreshID = UUID().uuidString
+        
+        let requestedStationID = requestLocation.observationStationID
+        let requestedLocationName = requestLocation.name
+        
         defer {
             isLoading = false
         }
@@ -4718,8 +4725,8 @@ struct ContentView: View {
             let service = WeatherService()
             
             let response = try await service.fetchRecentObservations(
-                stationID: selectedLocation.observationStationID,
-                hours: selectedHistoryDuration.rawValue
+                stationID: requestLocation.observationStationID,
+                hours: requestedDurationHours
             )
             let forecast: Forecast?
             let forecastFailureDescription: String?
@@ -4728,11 +4735,11 @@ struct ContentView: View {
                 forecast = try await forecastRouter
                     .forecast(
                         for: ForecastRequest(
-                            latitude: selectedLocation.latitude,
-                            longitude: selectedLocation.longitude,
-                            timeZoneIdentifier: selectedLocation.timeZoneIdentifier,
-                            countryCode: selectedLocation.countryCode,
-                            stationIdentifier: selectedLocation.observationStationID
+                            latitude: requestLocation.latitude,
+                            longitude: requestLocation.longitude,
+                            timeZoneIdentifier: requestLocation.timeZoneIdentifier,
+                            countryCode: requestLocation.countryCode,
+                            stationIdentifier: requestLocation.observationStationID
                         )
                     )
                 
@@ -4746,8 +4753,18 @@ struct ContentView: View {
             
             let fetchSeconds =
             Double(fetchDuration.components.seconds) + Double(fetchDuration.components.attoseconds) / 1_000_000_000_000_000_000.0
-            let cutoffDate = Date().addingTimeInterval( -Double(selectedHistoryDuration.rawValue) * 60.0 * 60.0
+            let cutoffDate = Date().addingTimeInterval( -Double(requestedDurationHours) * 60.0 * 60.0
             )
+            
+            guard selectedLocation.id == requestLocation.id,
+                  selectedHistoryDuration.rawValue == requestedDurationHours else {
+                print("""
+                [FORECAST DEBUG \(refreshID)] Discarded stale refresh.
+                Requested: \(requestLocation.name) \(requestLocation.observationStationID)
+                Current: \(selectedLocation.name) \(selectedLocation.observationStationID)
+                """)
+                return
+            }
             
             temperatureHistory = response.features.compactMap { feature -> TemperaturePoint? in
                 guard feature.properties.timestamp >= cutoffDate,
@@ -4790,6 +4807,40 @@ struct ContentView: View {
             temperatureForecast =
                 DashboardForecastAdapter
                     .temperaturePoints(from: forecast)
+            
+            let diagnosticNow = Date()
+            let next24Hours = diagnosticNow.addingTimeInterval(24.0 * 60.0 * 60.0)
+            let next72Hours = diagnosticNow.addingTimeInterval(72.0 * 60.0 * 60.0)
+            
+            let forecastNext24Count = temperatureForecast.filter {
+                $0.timestamp >= diagnosticNow && $0.timestamp <= next24Hours
+            }.count
+            
+            let forecastNext72Count = temperatureForecast.filter {
+                $0.timestamp >= diagnosticNow && $0.timestamp <= next72Hours
+            }.count
+            
+            let firstForecastTimestamp = temperatureForecast.first?.timestamp.ISO8601Format() ?? "nil"
+            
+            let lastForecastTimestamp = temperatureForecast.last?.timestamp.ISO8601Format() ?? "nil"
+            
+            let latestHistoryTimestamp = temperatureHistory.last?.timestamp.ISO8601Format() ?? "nil"
+            
+            print("""
+                [FORECAST DEBUG \(refreshID)]
+                Requested station: \(requestedLocationName) \(requestedStationID)
+                Current station: \(selectedLocation.name) \(selectedLocation.observationStationID)
+                Requested duration: \(requestedDurationHours) hours
+                Current duration: \(selectedHistoryDuration.rawValue) hours
+                Forecast count: \(temperatureForecast.count)
+                Forecast next 24 hours: \(forecastNext24Count)
+                Forecast next 72 hours: \(forecastNext72Count)
+                First forecast timestamp: \(firstForecastTimestamp)
+                Last forecast timestamp: \(lastForecastTimestamp)
+                Latest history timestamp: \(latestHistoryTimestamp)
+                Forecast error: \(forecastFailureDescription ?? "none")
+                Diagnostic now: \(diagnosticNow.ISO8601Format())
+                """)
             
             if let latestObservation = response.features.first(
                 where: { observation in

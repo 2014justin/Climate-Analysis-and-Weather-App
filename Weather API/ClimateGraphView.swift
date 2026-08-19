@@ -3,6 +3,7 @@
 ///has huge use for any profession that relies on climatology.
 
 import SwiftUI
+import Foundation
 import Charts
 import AppKit
 
@@ -1994,6 +1995,7 @@ struct ClimateGraphView: View {
         HStack(spacing: 10) {
             switch graphType {
             case .thresholdSeasons:
+                /// Shows the name of the station & climate PoR for the thresholds season chart.
                 Text(
                     "\(location.acisStationID) · \(thresholdSourcePeriodText)"
                 )

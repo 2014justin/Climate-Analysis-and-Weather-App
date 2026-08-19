@@ -183,6 +183,7 @@ actor ECCCForecastRegionCatalogService: ECCCForecastRegionResolving {
     func resolvedForecast(
         containingLatitude latitude: Double,
         longitude: Double,
+        stationIdentifier: String? = nil,
         referenceDate: Date = Date()
     ) async throws -> ECCCMeteocodeResolvedRegionForecast {
         let resolvedRegion =
@@ -196,8 +197,37 @@ actor ECCCForecastRegionCatalogService: ECCCForecastRegionResolving {
                 referenceDate: referenceDate
             )
         
+        let supplementalProducts =
+            ECCCForecastProductCompatibility
+                .supplementalProducts(
+                    for: stationIdentifier,
+                    resolvedRegion: resolvedRegion
+                )
+                .filter { product in
+                    let normalizedBulletinCode = product.bulletinCode
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .uppercased()
+                    let normalizedRegionCode = product.regionCode
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .uppercased()
+                    
+                    return documents.contains { document in
+                        document.bulletinCode
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .uppercased() == normalizedBulletinCode &&
+                        document.regions.contains { region in
+                            region.regionCode
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .uppercased() == normalizedRegionCode
+                        }
+                    }
+                }
+        
+        let forecastRegion =
+            resolvedRegion.addingProducts(supplementalProducts)
+        
         let segments =
-        try documents.forecastSegments(for: resolvedRegion)
+        try documents.forecastSegments(for: forecastRegion)
         
         return ECCCMeteocodeResolvedRegionForecast(
             region: resolvedRegion,

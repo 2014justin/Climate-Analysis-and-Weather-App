@@ -397,19 +397,7 @@ enum ThresholdEventMode: String, CaseIterable, Identifiable {
         family.fallEventChoice
     }
     
-    ///explains the thresholds
-    var explanation: String {
-        switch self {
-        case .coldNights:
-            return "After this point in spring, nights won't drop to OR below the threshold temperature until the fall."
-        case .warmAfternoon:
-            return "First occurence of a threshold temperature in Spring. Useful for cold climates like Fairbanks, AK since the first 50 degree day is welcomed after the long winter."
-        case .warmAfternoonLockIn:
-            return "By this point in spring, afternoons in summer usually always reach at least this high. For fall it is afternoons usually remain below x degrees until the following spring."
-        case .mildNights:
-            return "Spring shows the first mild night; e.g. the first April night that doesn't drop below freezing. This does NOT mean the last spring freeze. It is just spring knocking on the door."
-        }
-    }
+    
 }
 
 enum WeatherYearOverlay: String, CaseIterable, Identifiable {

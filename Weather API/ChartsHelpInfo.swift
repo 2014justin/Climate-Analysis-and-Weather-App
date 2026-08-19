@@ -88,22 +88,40 @@ extension ChartsHelpInfo {
     /// Turns source-code line wrapping into naturally flowing prose while preserving
     /// intentionally-blank lines between paragraphs. Functions kind of like a function.
     struct Prose: View {
-        private let content: String
-        
+        private let content: String /// Stores the cleaned-up prose. let because the text is calculated once the view is created.
+
         init(_ content: String) {
-            self.content = content
-                .components(separatedBy: "\n\n")
-                .map { paragraph in
-                    paragraph
-                        .split(whereSeparator: { $0.isWhitespace })
-                        .joined(separator: " ")
+            var paragraphs = [String]() /// paragraphs - the finished paragraph
+            var current = "" /// the current paragraph being assembled
+            
+            /// Splits the incoming text into individual lines and processes them one at a itme.
+            for rawLine in content.components(separatedBy: "\n") {
+                /// Removes the indentation from each line. Important because Swift multiline strings are usually indented to match
+                /// the surrounding code.
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+
+                if line.isEmpty { /// If the current paragraph has ended
+                    if !current.isEmpty { /// If the paragraph has been assembled, save it to paragraphs.
+                        paragraphs.append(current) /// Read current so the next paragraph starts cleanly.
+                        current = ""
+                    }
+                } else { /// if the line contains text, continue building the current paragraph.
+                    current = current.isEmpty
+                        ? line /// If this is the first line of the paragraph, use it directly
+                        : "\(current) \(line)" /// Otherwise append the new line with a space
                 }
-                .joined(separator: "\n\n")
+            }
+
+            if !current.isEmpty {
+                paragraphs.append(current)
+            }
+
+            self.content = paragraphs.joined(separator: "\n\n") /// Combines the cleaned paragraphs
         }
-        /// Output of Prose is not a "nice text" - it is a rendered view. With a width rule
-        /// and a don't truncate me rul.
+
         var body: some View {
             Text(content)
+                /// Lets the text use the available card width and aligns it to the left
                 .frame(
                     maxWidth: .infinity,
                     alignment: .leading
@@ -111,6 +129,7 @@ extension ChartsHelpInfo {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+
 }
 
 extension ChartsHelpInfo {
@@ -972,7 +991,7 @@ extension ChartsHelpInfo {
                         "The maximum positive branch separation over their shared solar-input domain."
                 )
                 
-                Text(
+                Prose(
                     """
                     The app evaluates 1,001 evenly-spaced solar-input levels and linearly interpolates
                     each branch. MECD is a local diagnostic: it finds the deepest portion of the loop

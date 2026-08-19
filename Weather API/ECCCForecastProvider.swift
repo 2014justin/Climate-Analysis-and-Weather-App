@@ -38,10 +38,11 @@ struct ECCCForecastProvider: WeatherForecastProviding {
         for request: ForecastRequest
     ) async throws -> Forecast {
         let resolvedForecast =
-        try await regionCatalogService.resolvedForecast(
-            containingLatitude: request.latitude,
-            longitude: request.longitude
-        )
+            try await regionCatalogService.resolvedForecast(
+                containingLatitude: request.latitude,
+                longitude: request.longitude,
+                stationIdentifier: request.stationIdentifier
+            )
         
         let mergedIntervals = resolvedForecast.mergedTemperatureIntervals()
         

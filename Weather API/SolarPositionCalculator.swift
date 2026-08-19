@@ -36,9 +36,7 @@ nonisolated enum SolarPositionCalculator {
     static func ephemeris(
         at instant: Date
     ) -> SolarEphemeris {
-        let time = utcTimeComponents(
-            for: instant
-        )
+        let time = utcTimeComponents( for: instant )
         
         let gamma = 2.0 * Double.pi / Double(time.daysInYear) * (
             Double(time.dayOfYear - 1) + (time.fractionalUTCHour - 12.0) / 24.0
