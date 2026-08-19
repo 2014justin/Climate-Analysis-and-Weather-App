@@ -74,6 +74,19 @@ struct ClimateAtlasView: View {
     
     @State private var forecastStatus = "Forecast layer not loaded."
     
+    /// Search field text for the atlas location search.
+    @State private var searchQuery = ""
+    
+    /// Results of the last completed search (stations first, then places).
+    @State private var searchResults: [AtlasSearchResult] = []
+    
+    /// True while a station + MapKit search is in flight.
+    @State private var isSearchingAtlas = false
+    
+    /// A MapKit-only hit shown as a temporary pin. Never backed by an Atlas Observation - the app must
+    /// not fabricate live weather.
+    @State private var selectedPlaceResult: AtlasSearchResult?
+    
     /// Owns the shared 121-frame, five-day playback timeline.
     @State private var forecastTimelineController = ForecastTimelineController()
     
@@ -87,6 +100,36 @@ struct ClimateAtlasView: View {
             latitudeSpan: visibleRegion.span.latitudeDelta,
             longitudeSpan: visibleRegion.span.longitudeDelta
         )
+    }
+    
+    /// One row in the atlas search dropdown. Stations carry an observationID; places are geographic-only hits for
+    /// this temporary pin.
+    struct AtlasSearchResult: Identifiable {
+        enum Kind {
+            case station
+            case place
+        }
+        
+        let kind: Kind
+        let title: String
+        let detail: String
+        let coordinate: CLLocationCoordinate2D
+        let observationID: String?
+        let temperatureFahrenheit: Double?
+        
+        var id: String {
+            if let observationID = observationID {
+                return observationID
+            }
+            
+            let coordinateKey = String(
+                format: "%.6f,%.6f",
+                coordinate.latitude,
+                coordinate.longitude
+            )
+            
+            return "place-\(coordinateKey)"
+        }
     }
     
     @MainActor
@@ -467,6 +510,166 @@ struct ClimateAtlasView: View {
         return forecastTemperature.fahrenheit
     }
     
+    /// Station search index rebuilt from the current live snapshot.
+    /// Each entry already carrier the joined catalog metadata
+    /// (name, state/province, country), which the METAR snapshot alone does not.
+    private var stationLookup: [AtlasObservation] {
+        observationSnapshot?.observations ?? []
+    }
+    
+    /// Runs the two-state search: local live stations first, then MapKit
+    /// places that no nearby live station already covers.
+    @MainActor
+    fileprivate func performAtlasSearch(
+        query: String
+    ) async {
+        let trimmedQuery =
+            query.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard trimmedQuery.isEmpty == false else {
+            searchResults = []
+            isSearchingAtlas = false
+            return
+        }
+        
+        isSearchingAtlas = true
+        defer {
+            isSearchingAtlas = false
+        }
+        
+        let lookup = stationLookup
+        
+        /// Stage 1: match live stations by name or ICAO id.
+        let stationMatches =
+            lookup
+            .filter {
+                $0.station.name
+                    .localizedCaseInsensitiveContains(trimmedQuery)
+                || $0.station.source.stationID
+                    .localizedCaseInsensitiveContains(trimmedQuery)
+            }
+            .sorted {
+                let firstIsNameHit =
+                $0.station.name
+                    .localizedCaseInsensitiveContains(trimmedQuery)
+                let secondIsNameHit =
+                $1.station.name
+                    .localizedCaseInsensitiveContains(trimmedQuery)
+                
+                if firstIsNameHit != secondIsNameHit {
+                    return firstIsNameHit
+                }
+                
+                if $0.station.source.countryCode != $1.station.source.countryCode {
+                    return $0.station.source.countryCode < $1.station.source.countryCode
+                }
+                
+                return $0.station.source.stationID < $1.station.source.stationID
+            }
+            .prefix(6)
+        
+        var results: [AtlasSearchResult] =
+        stationMatches.map {
+            let station = $0.station
+            
+            let area = station.administrativeAreaCode ?? station.source.countryCode
+            
+            return AtlasSearchResult(
+                kind: .station,
+                title: station.name,
+                detail: "\(station.source.stationID) x \(area) \(station.source.countryCode)",
+                coordinate: CLLocationCoordinate2D(latitude: station.latitude, longitude: station.longitude),
+                observationID: $0.id,
+                temperatureFahrenheit: $0.temperatureFahrenheit
+            )
+        }
+        
+        /// State 2: MapKit place search for geographic locations with no live station nearby, like 'Pahrump'
+        do {
+            let request = MKLocalSearch.Request()
+            
+            request.naturalLanguageQuery = trimmedQuery
+            request.resultTypes = .pointOfInterest
+            
+            let placeResponse = try await MKLocalSearch(request: request).start()
+            
+            let coveredStationIDs = Set(
+                stationMatches.map(\.id)
+            )
+            
+            for mapItem in placeResponse.mapItems.prefix(5) {
+                let coordinate = mapItem.placemark.coordinate
+                
+                /// A place is redundant when a live station within 25km already exists - that station
+                /// is the real answer for this location.
+                let nearbyLive =
+                lookup.first {
+                    $0.station.latitude.distance(to: coordinate.latitude) < 0.23
+                    &&
+                    $0.station.longitude.distance(to: coordinate.longitude) < 0.23
+                }
+                
+                if let nearbyLive {
+                    if !coveredStationIDs.contains(nearbyLive.id) {
+                        let station = nearbyLive.station
+                        
+                        let area = station.administrativeAreaCode ?? station.source.countryCode
+                        
+                        results.append(
+                            AtlasSearchResult(
+                                kind: .station,
+                                title: station.name,
+                                detail: "\(station.source.stationID) - \(area) \(station.source.countryCode)",
+                                coordinate: CLLocationCoordinate2D(
+                                    latitude: station.latitude,
+                                    longitude: station.longitude
+                                ),
+                                observationID: nearbyLive.id,
+                                temperatureFahrenheit: nearbyLive.temperatureFahrenheit
+                            )
+                        )
+                    }
+                    continue
+                }
+                let placemark = mapItem.placemark
+                
+                let placeDetail =
+                    [
+                        placemark.locality,
+                        placemark.administrativeArea,
+                        placemark.country
+                    ]
+                    .compactMap { $0 }
+                    .filter {
+                        $0.isEmpty == false
+                    }
+                    .joined(separator: " x ")
+                
+                results.append(
+                    AtlasSearchResult(
+                        kind: .place,
+                        title: mapItem.name ?? trimmedQuery,
+                        detail: placeDetail,
+                        coordinate: coordinate,
+                        observationID: nil,
+                        temperatureFahrenheit: nil
+                    )
+                )
+            }
+        } catch {
+            /// Mapkit failures (offline, bad query) degrade to station-only results instead of killing the search.
+        }
+        
+        /// Guard against a stale response landing after the user has already typed a new query.
+        guard searchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery
+        else {
+            return
+        }
+        
+        searchResults = results
+    }
+    
     var body: some View {
         let selectedForecastInstant = forecastTimelineController.selectedInstant
         let solarIlluminationInstant =
@@ -567,15 +770,44 @@ struct ClimateAtlasView: View {
                     }
                 }
                 /// Controls 'Refresh forecast' and how many stations loaded on the top left of the view.
-                refreshAction
-                    .frame(maxWidth: .infinity)
-                    .offset(y: -20)
+                HStack(
+                    alignment: .center,
+                    spacing: 12
+                ) {
+                    atlasSearchField
+                    
+                    Spacer()
+                    
+                    refreshAction
+                }
+                .offset(y: -20)
             }
             
             ///$cameraPosition is two-way binding. The map can update the stored camera when the user moves it.
             Map(position: $cameraPosition) {
                 if showsSolarIllumination {
                     AtlasSolarIlluminationLayer(ephemeris: solarEphemeris)
+                }
+                if let selectedPlaceResult {
+                    Annotation(
+                        selectedPlaceResult.title,
+                        coordinate: selectedPlaceResult.coordinate,
+                        anchor: .bottom
+                    ) {
+                        VStack(spacing: 3) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.system(size: 30))
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, DashboardTheme.forecastTemperature)
+                            
+                            Text(selectedPlaceResult.title)
+                                .font(.caption2.weight(.semibold))
+                                .lineLimit(1)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        }
+                    }
                 }
                 ForEach(visibleObservations) { observation in
                     Annotation(
@@ -662,7 +894,8 @@ struct ClimateAtlasView: View {
                     )
                     
                     visibleRegion = context.region
-                    
+                    selectedPlaceResult = nil
+                    searchResults = []
                     showSnapshotObservations(
                         from: observationSnapshot,
                         in: newBounds,
@@ -903,6 +1136,170 @@ struct ClimateAtlasView: View {
                 annotationSize: $annotationSize,
                 showsSolarIllumination: $showsSolarIllumination
             )
+        }
+    }
+    
+    /// Search field with a clear button and the debounced result dropdown. Results overlay under the field, so the
+    /// map and header layout are untouched.
+    fileprivate var atlasSearchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DashboardTheme.textSecondary)
+            
+            TextField(
+                "Search location, station, or ICAO ID",
+                text: $searchQuery
+            )
+            .textFieldStyle(.plain)
+            .font(.subheadline)
+            .lineLimit(1)
+            .onExitCommand {
+                searchResults = []
+            }
+            if isSearchingAtlas {
+                ProgressView()
+                    .controlSize(.small)
+            } else if searchQuery.isEmpty == false {
+                Button {
+                    searchQuery = ""
+                    searchResults = []
+                    selectedPlaceResult = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(width: 300, height: 32)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DashboardTheme.panelElevated.opacity(0.88))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .top) {
+            if searchQuery.isEmpty == false,
+               searchResults.isEmpty == false || isSearchingAtlas == false {
+                searchResultsDropdown
+                    .offset(y: 40)
+            }
+        }
+        .task(id: searchQuery) {
+            try? await Task.sleep(for: .milliseconds(300))
+            
+            await performAtlasSearch(query: searchQuery)
+        }
+    }
+    
+    /// Dropdown of the station and place matches. Station rows select the real observation and
+    /// pop the existing card; place rows drop the temporary pin only.
+    fileprivate var searchResultsDropdown: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(searchResults.prefix(8)) { result in
+                searchResultRow(result)
+            }
+            
+            if searchResults.isEmpty,
+               isSearchingAtlas == false {
+                Text("No matches for \(searchQuery)")
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                    .padding(.vertical, 8)
+            }
+        }
+        .frame(width: 340)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DashboardTheme.panel)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardTheme.border, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.250), radius: 10, y: 4)
+    }
+    
+    fileprivate func searchResultRow(
+        _ result: AtlasSearchResult
+    ) -> some View {
+        Button {
+            selectSearchResult(result)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName:
+                        result.kind == .station
+                        ? "antenna.radiowaves.left.and.right"
+                      : "mappin.and.ellipse")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(
+                    result.kind == .station
+                    ? DashboardTheme.success
+                    : DashboardTheme.forecastTemperature
+                )
+                .frame(width: 16)
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(result.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    
+                    Text(result.detail)
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.textSecondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer(minLength: 8)
+                
+                if let temperatureFahrenheit = result.temperatureFahrenheit {
+                    Text(
+                        String(
+                            format: "%.0f°F",
+                            temperatureFahrenheit
+                        )
+                    )
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(DashboardTheme.textPrimary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(DashboardTheme.textPrimary)
+    }
+    
+    /// Station hits move the camera, select the real observation (which opens the existing card), and clear the pin.
+    /// Place hits only move the camera and drop the temporary pin.
+    fileprivate func selectSearchResult(
+        _ result: AtlasSearchResult
+    ) {
+        searchResults = []
+        selectedPlaceResult = nil
+        
+        let targetRegion = MKCoordinateRegion(
+            center: result.coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.6, longitudeDelta: 0.6)
+        )
+        
+        withAnimation(.easeInOut(duration: 0.8)) {
+            cameraPosition = .region(targetRegion)
+        }
+        
+        if let observationID = result.observationID {
+            selectedObservationID = observationID
+        } else {
+            selectedPlaceResult = result
         }
     }
     
