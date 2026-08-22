@@ -3,6 +3,7 @@ import Playgrounds
 import Charts
 import AppKit
 import UniformTypeIdentifiers
+import Foundation
 
 
 struct RefreshWeatherActionKey: FocusedValueKey {
@@ -70,7 +71,7 @@ extension FocusedValues {
     
     var selectHistoryDuration: ((HistoryDuration) -> Void)? {
         get {
-            self[SelectHistoryDurationActionKey.self]
+            self[SelectHistoryDurationActionKey.self] /// Reads the action associated with selec thistory
         }
         
         set {
@@ -118,6 +119,7 @@ extension FocusedValues {
         }
     }
     /// Station selector. Command + Shift + 1, 2, 3, 4, etc
+    /// There may be no Atlas selection action right now
     var selectLocation: ((WeatherLocation) -> Void)? {
         get {
             self[SelectLocationActionKey.self]
@@ -161,6 +163,11 @@ extension FocusedValues {
     }
 }
 
+/// In this app, struct WeatherCommands becomes the menu layer containing : Refresh Weather, Show Dashboard
+/// Show Climate Atlas, history durations, location shortcuts, export commands, and graph toggles.
+/// WeatherCommands owns menu labels and shortcuts
+/// ContentView owns selected location, weather data, charts, sheets, and refresh logic.
+/// The focused-value closures act as wires between the two.
 struct WeatherCommands: Commands {
     @FocusedValue(\.refreshWeather) private var refreshWeather
     @FocusedValue(\.selectHistoryDuration) private var selectHistoryDuration
@@ -172,10 +179,14 @@ struct WeatherCommands: Commands {
     @FocusedValue(\.toggleHeatIndex) private var toggleHeatIndex
     @FocusedValue(\.selectAppSection) private var selectAppSection
     
+    /// macOS should add this to the application menu.
     var body: some Commands {
+        /// Creates a group of menu commands and places them after macOS's standard New Item command
         CommandGroup(after: .newItem) {
             
-            /// Switch between Atlas and Dashboard
+            /// Switch between Atlas and Dashboard. If the focused app-section action exists, call it with .dashboard.
+            /// User chooses Show Dashboard -> WeatherCommands send .dashboard -> ContentView receives .dashboard
+            /// -> selectedAppSeciton changes -> the app displays the dashboard
             Button("Show Dashboard") {
                 selectAppSection?(.dashboard)
             }
@@ -339,6 +350,7 @@ struct WeatherCommands: Commands {
     }
 }
 
+/// launches MyApp and creates content view. This is the app's spawnpoint.
 @main struct MyApp: App {
     var body: some Scene {
         WindowGroup {

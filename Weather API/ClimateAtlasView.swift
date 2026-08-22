@@ -37,11 +37,33 @@ struct ClimateAtlasView: View {
     @State private var liveSolarInstant = Date.now
     @State private var showsSolarIllumination = true
     @State private var isShowingMapOptions = false
+    
+    @AppStorage(
+        "atlas.showsWeatherGovAPIActivity"
+    )
+    private var showsWeatherGovAPIActivity = false
+    
+    @State private var weatherGovAPIActivitySnapshot =
+        WeatherGovAPIActivitySnapshot(
+            requestsLastMinute: 0,
+            inFlightRequestCount: 0,
+            successfulRequestsLastMinute: 0,
+            failedRequestsLastMinute: 0,
+            observationCacheHitsLastMinute: 0
+        )
+    
+    @State private var showsMaximumStationDensity: Bool = false
     @State private var selectedObservationID: String?
     @State private var visibleObservations:
         [AtlasObservation] = []
 
     @State private var isLoadingObservations = false
+    
+    @State private var isLoadingAllNetworksObservations = false
+    
+    @State private var allNetworksObservationReloadPending = false
+    
+    @State private var allNetworksPendingForceRefresh = false
 
     @State private var observationStatusDetail =
         "Open Atlas to load live stations."
@@ -52,11 +74,23 @@ struct ClimateAtlasView: View {
 
     @State private var snapshotStore = AviationWeatherSnapshotStore()
     
+    @State private var allNetworksObservationSnapshot: AtlasObservationSnapshot?
+    
+    @State private var weatherGovObservationStore = WeatherGovObservationStore()
+    
     @State private var temperatureHistoryStore = AtlasTemperatureHistoryStore()
     
     private let temperatureHistoryService = AviationWeatherTemperatureHistoryService()
     
+    private let weatherGovTemperatureHistoryService = WeatherGovTemperatureHistoryService()
+    
+    @State private var isLoadingWeatherGovTemperatureHistory: Bool = false
+    
+    @State private var weatherGovTemperatureHistoryReloadPending: Bool = false
+    
     @State private var temperatureHistoryRequestedStationIDs: Set<String> = []
+    
+    @State private var temperatureHistoryReadyStationIDs: Set<String> = []
     
     /// Dictionary would look like
     /// [
@@ -102,6 +136,23 @@ struct ClimateAtlasView: View {
         )
     }
     
+    private var isDisplayingRollingTemperatureExtrema: Bool {
+        guard weatherLayer == .observations else {
+            return false
+        }
+        
+        switch displayedMetric {
+        case .temperature:
+            return false
+        case .dewPoint:
+            return false
+        case .rolling24HourMaximum:
+            return true
+        case .rolling24HourMinimum:
+            return true
+        }
+    }
+    
     /// One row in the atlas search dropdown. Stations carry an observationID; places are geographic-only hits for
     /// this temporary pin.
     struct AtlasSearchResult: Identifiable {
@@ -136,30 +187,51 @@ struct ClimateAtlasView: View {
     fileprivate func refreshVisibleTemperatureExtrema(
         endingAt windowEnd: Date = .now
     ) async {
-        let requestedStationIDs = visibleObservations.map(\.id)
-        
+        let visibleStationIDs =
+            Set(visibleObservations.map(\.id))
+
+        let requestedStationIDs =
+            visibleStationIDs
+                .intersection(
+                    temperatureHistoryReadyStationIDs
+                )
+                .sorted()
+
         guard requestedStationIDs.isEmpty == false else {
             temperatureExtremaByStationID = [:]
             return
         }
-        
-        let results = await temperatureHistoryStore
-            .rollingExtrema(for: requestedStationIDs, endingAt: windowEnd)
-        
-        // Avoid publishing results from an old mapviewport if the user moved the map
-        // while this actor request was suspended.
-        guard Set(visibleObservations.map(\.id)) == Set(requestedStationIDs) else {
+
+        let results =
+            await temperatureHistoryStore
+                .rollingExtrema(
+                    for: requestedStationIDs,
+                    endingAt: windowEnd
+                )
+
+        let currentReadyVisibleIDs =
+            Set(visibleObservations.map(\.id))
+                .intersection(
+                    temperatureHistoryReadyStationIDs
+                )
+
+        guard currentReadyVisibleIDs
+                == Set(requestedStationIDs) else {
             return
         }
-        
-        temperatureExtremaByStationID = results
-        
+
+        temperatureExtremaByStationID =
+            results
     }
     
     @MainActor
     fileprivate func loadVisibleTemperatureHistory() async {
         // Preserve namespaced IDs inside the provider-agnostic history store,
         // but translate them to plain ICAO IDs at the network boundary.
+        
+        guard isDisplayingRollingTemperatureExtrema else {
+            return
+        }
         var aviationIDByNamespacedID: [String: String] = [:]
 
         for observation in visibleObservations {
@@ -268,10 +340,31 @@ struct ClimateAtlasView: View {
                 )
                 #endif
                 
+                let loadedNamespacedIDs =
+                    Set(
+                        namespacedSamples.map(\.stationID)
+                    )
+
+                let missingNamespacedIDs =
+                    Set(namespacedBatch)
+                        .subtracting(
+                            loadedNamespacedIDs
+                        )
+
                 await temperatureHistoryStore.ingest(
                     namespacedSamples,
                     referenceDate: Date.now
                 )
+
+                temperatureHistoryReadyStationIDs
+                    .formUnion(
+                        loadedNamespacedIDs
+                    )
+
+                temperatureHistoryRequestedStationIDs
+                    .subtract(
+                        missingNamespacedIDs
+                    )
 
                 await refreshVisibleTemperatureExtrema()
                 
@@ -294,20 +387,177 @@ struct ClimateAtlasView: View {
     }
     
     @MainActor
+    fileprivate func loadVisibleWeatherGovTemperatureHistory() async {
+        guard stationScope == .allNetworks,
+              isDisplayingRollingTemperatureExtrema else {
+            return
+        }
+
+        if isLoadingWeatherGovTemperatureHistory {
+            weatherGovTemperatureHistoryReloadPending =
+                true
+
+            return
+        }
+
+        var stationsByID:
+            [String: AtlasStation] = [:]
+
+        for observation in visibleObservations {
+            let station =
+                observation.station
+
+            guard station.source.providerID
+                    == WeatherGovAPI.providerID else {
+                continue
+            }
+
+            stationsByID[station.id] =
+                station
+        }
+
+        let newStations =
+            stationsByID
+                .values
+                .filter {
+                    temperatureHistoryRequestedStationIDs
+                        .contains($0.id)
+                        == false
+                }
+                .sorted {
+                    $0.id < $1.id
+                }
+
+        // Show All Stations can expose a very large number of
+        // supplemental stations. Limit each deliberate loading
+        // pass while preserving the remainder for a later pass.
+        let stationsToLoad =
+            Array(
+                newStations.prefix(40)
+            )
+
+        guard stationsToLoad.isEmpty == false else {
+            await refreshVisibleTemperatureExtrema()
+            return
+        }
+
+        isLoadingWeatherGovTemperatureHistory =
+            true
+
+        weatherGovTemperatureHistoryReloadPending =
+            false
+
+        let windowEnd =
+            Date.now
+
+        let pacingClock =
+            ContinuousClock()
+
+        for (
+            stationIndex,
+            station
+        ) in stationsToLoad.enumerated() {
+            guard Task.isCancelled == false,
+                  stationScope == .allNetworks,
+                  isDisplayingRollingTemperatureExtrema else {
+                break
+            }
+
+            let currentlyVisibleStationIDs =
+                Set(
+                    visibleObservations.map(\.id)
+                )
+
+            // Do not spend a request on a station that left the
+            // viewport while earlier history was downloading.
+            guard currentlyVisibleStationIDs
+                    .contains(station.id) else {
+                continue
+            }
+
+            temperatureHistoryRequestedStationIDs
+                .insert(station.id)
+
+            do {
+                let samples =
+                    try await
+                        weatherGovTemperatureHistoryService
+                            .fetchPrevious24Hours(
+                                for: station,
+                                endingAt: windowEnd
+                            )
+
+                await temperatureHistoryStore.ingest(
+                    samples,
+                    referenceDate: windowEnd
+                )
+
+                // A successful empty history is still a
+                // completed lookup. Its annotation correctly
+                // remains an em dash without repeated requests.
+                if samples.isEmpty == false {
+                    temperatureHistoryReadyStationIDs.insert(station.id)
+                }
+            } catch is CancellationError {
+                temperatureHistoryRequestedStationIDs
+                    .remove(station.id)
+
+                break
+            } catch {
+                temperatureHistoryRequestedStationIDs
+                    .remove(station.id)
+
+                #if DEBUG
+                print(
+                    "Weather.gov history failed for "
+                    + "\(station.id): "
+                    + error.localizedDescription
+                )
+                #endif
+            }
+
+            // Publish results progressively rather than making
+            // every annotation wait for the entire pass.
+            await refreshVisibleTemperatureExtrema(
+                endingAt: windowEnd
+            )
+
+            // Deliberately pace station starts to roughly one
+            // per second. Individual stations may paginate.
+            if stationIndex
+                < stationsToLoad.count - 1 {
+
+                do {
+                    try await pacingClock.sleep(
+                        for: .seconds(1)
+                    )
+                } catch {
+                    break
+                }
+            }
+        }
+
+        let shouldReloadLatestViewport =
+            weatherGovTemperatureHistoryReloadPending
+
+        weatherGovTemperatureHistoryReloadPending =
+            false
+
+        isLoadingWeatherGovTemperatureHistory =
+            false
+
+        if shouldReloadLatestViewport {
+            await loadVisibleWeatherGovTemperatureHistory()
+        }
+    }
+    
+    @MainActor
     fileprivate func showSnapshotObservations(
         from snapshot: AtlasObservationSnapshot?,
         in bounds: AtlasMapBounds,
         scope: AtlasStationScope
     ) {
-        guard scope == .primary else {
-            visibleObservations = []
-            selectedObservationID = nil
-
-            observationStatusDetail =
-                "All Networks loading will be added after the primary layer."
-
-            return
-        }
+        
 
         guard let snapshot else {
             visibleObservations = []
@@ -326,7 +576,11 @@ struct ClimateAtlasView: View {
                 .observations(
                     from: snapshot,
                     in: bounds,
-                    allowedCountryCodes: ["US", "CA"]
+                    scope: scope,
+                    displayedMetric: displayedMetric,
+                    annotationSize: annotationSize,
+                    showsMaximumDensity: showsMaximumStationDensity,
+                    allowedCountryCodes: nil
                 )
 
         visibleObservations =
@@ -355,11 +609,38 @@ struct ClimateAtlasView: View {
                 ? "updated now"
                 : "\(ageMinutes)m old"
 
+        let reportDescription = scope == .primary
+            ? "Metar reports"
+            : "combined reports"
+        
         observationStatusDetail =
-            "\(snapshot.rawReportCount) worldwide reports → "
-            + "\(snapshot.observations.count) live stations → "
-            + "\(reducedObservations.count) shown • "
-            + "\(ageDescription)."
+        "\(snapshot.rawReportCount) \(reportDescription) → "
+        + "\(snapshot.observations.count) live stations → "
+        + "\(reducedObservations.count) shown • "
+        + "\(ageDescription)."
+    }
+    
+    @MainActor
+    fileprivate func redisplayCurrentObservationSnapshot() {
+        let snapshot:
+            AtlasObservationSnapshot?
+
+        switch stationScope {
+        case .primary:
+            snapshot =
+                observationSnapshot
+
+        case .allNetworks:
+            snapshot =
+                allNetworksObservationSnapshot
+                ?? observationSnapshot
+        }
+
+        showSnapshotObservations(
+            from: snapshot,
+            in: visibleBounds,
+            scope: stationScope
+        )
     }
 
     @MainActor
@@ -429,6 +710,177 @@ struct ClimateAtlasView: View {
                     "Station snapshot failed: "
                     + error.localizedDescription
             }
+        }
+    }
+    
+    @MainActor
+    fileprivate func loadAllNetworksObservationSnapshot(
+        forceRefresh: Bool = false
+    ) async {
+        guard stationScope == .allNetworks else {
+            return
+        }
+
+        if isLoadingAllNetworksObservations {
+            allNetworksObservationReloadPending = true
+            allNetworksPendingForceRefresh =
+                allNetworksPendingForceRefresh || forceRefresh
+            return
+        }
+
+        guard let primarySnapshot = observationSnapshot else {
+            observationStatusDetail =
+                "The METAR base must finish loading "
+                + "before All Networks can load."
+            return
+        }
+
+        let requestedBounds = visibleBounds
+
+        guard requestedBounds.longitudeSpan <= 8,
+              requestedBounds.latitudeSpan <= 8 else {
+            showSnapshotObservations(
+                from: primarySnapshot,
+                in: requestedBounds,
+                scope: .allNetworks
+            )
+
+            observationStatusDetail =
+                "METAR is shown at this scale. "
+                + "Zoom into a region smaller than "
+                + "8° x 8° to load All Networks."
+
+            return
+        }
+
+        let supplementalBounds =
+            requestedBounds.padded(
+                by: 0.15,
+                maximumDegreesPerEdge: 0.35
+            )
+
+        isLoadingAllNetworksObservations = true
+
+        observationStatusDetail =
+            "Loading supplemental stations "
+            + "for the visible region..."
+
+        defer {
+            isLoadingAllNetworksObservations = false
+
+            if stationScope == .allNetworks,
+               allNetworksObservationReloadPending {
+                let shouldForceRefresh =
+                    allNetworksPendingForceRefresh
+
+                allNetworksObservationReloadPending = false
+                allNetworksPendingForceRefresh = false
+
+                Task {
+                    await loadAllNetworksObservationSnapshot(
+                        forceRefresh: shouldForceRefresh
+                    )
+                }
+            } else {
+                allNetworksObservationReloadPending = false
+                allNetworksPendingForceRefresh = false
+            }
+        }
+
+        let cachedSupplementalSnapshot =
+            await weatherGovObservationStore.cachedSnapshot(
+                in: supplementalBounds
+            )
+
+        guard Task.isCancelled == false,
+              stationScope == .allNetworks,
+              requestedBounds == visibleBounds else {
+            return
+        }
+
+        if cachedSupplementalSnapshot
+            .observations
+            .isEmpty == false {
+            let cachedMergedSnapshot =
+                AtlasObservationSnapshotMerger.merged(
+                    primary: primarySnapshot,
+                    supplemental:
+                        cachedSupplementalSnapshot
+                )
+
+            allNetworksObservationSnapshot =
+                cachedMergedSnapshot
+
+            showSnapshotObservations(
+                from: cachedMergedSnapshot,
+                in: requestedBounds,
+                scope: .allNetworks
+            )
+
+            observationStatusDetail +=
+                " Refreshing supplemental stations..."
+        }
+
+        do {
+            /// The small margin avoids stations popping in and out
+            /// along the exact screen boundary.
+            let supplementalSnapshot =
+                try await weatherGovObservationStore.snapshot(
+                    in: supplementalBounds,
+                    forceRefresh: forceRefresh
+                )
+
+            guard Task.isCancelled == false,
+                  stationScope == .allNetworks,
+                  requestedBounds == visibleBounds else {
+                return
+            }
+
+            let mergedSnapshot =
+                AtlasObservationSnapshotMerger.merged(
+                    primary: primarySnapshot,
+                    supplemental: supplementalSnapshot
+                )
+
+            allNetworksObservationSnapshot = mergedSnapshot
+
+            showSnapshotObservations(
+                from: mergedSnapshot,
+                in: requestedBounds,
+                scope: .allNetworks
+            )
+
+            Task {
+                await temperatureHistoryStore.ingest(
+                    supplementalSnapshot.temperatureHistorySamples,
+                    referenceDate: supplementalSnapshot.downloadedAt
+                )
+
+                await loadVisibleTemperatureHistory()
+                await loadVisibleWeatherGovTemperatureHistory()
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard stationScope == .allNetworks,
+                  requestedBounds == visibleBounds else {
+                return
+            }
+
+            let fallbackSnapshot =
+                allNetworksObservationSnapshot
+                ?? primarySnapshot
+
+            showSnapshotObservations(
+                from: fallbackSnapshot,
+                in: visibleBounds,
+                scope: .allNetworks
+            )
+
+            observationStatusDetail =
+                "Supplemental Weather.gov loading failed; "
+                + "cached data retained. "
+                + error.localizedDescription
         }
     }
     
@@ -589,7 +1041,7 @@ struct ClimateAtlasView: View {
             let request = MKLocalSearch.Request()
             
             request.naturalLanguageQuery = trimmedQuery
-            request.resultTypes = .pointOfInterest
+            request.resultTypes = .address.union(.pointOfInterest)
             
             let placeResponse = try await MKLocalSearch(request: request).start()
             
@@ -693,6 +1145,7 @@ struct ClimateAtlasView: View {
                             Text("Climate Atlas")
                                 .font(.largeTitle)
                                 .fontWeight(.semibold)
+                                
                             
                             Button {
                                 isShowingObservationInfo.toggle()
@@ -770,6 +1223,8 @@ struct ClimateAtlasView: View {
                     }
                 }
                 /// Controls 'Refresh forecast' and how many stations loaded on the top left of the view.
+                /// The button is centered under the Dashboard | Atlas picker
+                /// via the overlay; the search field keeps the left edge.
                 HStack(
                     alignment: .center,
                     spacing: 12
@@ -777,8 +1232,12 @@ struct ClimateAtlasView: View {
                     atlasSearchField
                     
                     Spacer()
-                    
-                    refreshAction
+                }
+                .overlay {
+                    HStack(spacing: 8) {
+                        refreshAction
+                        showAllStationsAction
+                    }
                 }
                 .offset(y: -20)
             }
@@ -896,13 +1355,25 @@ struct ClimateAtlasView: View {
                     visibleRegion = context.region
                     selectedPlaceResult = nil
                     searchResults = []
-                    showSnapshotObservations(
-                        from: observationSnapshot,
-                        in: newBounds,
-                        scope: stationScope,
-                    )
-                    
-                    Task { await loadVisibleTemperatureHistory() }
+                    switch stationScope {
+                    case .primary:
+                        showSnapshotObservations(
+                            from: observationSnapshot,
+                            in: newBounds,
+                            scope: .primary
+                        )
+                        
+                        Task { await loadVisibleTemperatureHistory() }
+                    case .allNetworks:
+                        /// Immediately reuse the merged snapshot already held in RAM while checking the new viewport
+                        showSnapshotObservations(
+                            from: allNetworksObservationSnapshot ?? observationSnapshot,
+                            in: newBounds,
+                            scope: .allNetworks
+                        )
+                        
+                        Task { await loadAllNetworksObservationSnapshot() }
+                    }
                 }
                 .frame(
                     maxWidth: .infinity,
@@ -923,8 +1394,29 @@ struct ClimateAtlasView: View {
                     .allowsHitTesting(false)
                 }
                 .overlay(alignment: .topTrailing) {
-                    mapOptionsButton
-                        .padding(12)
+                    VStack(
+                        alignment: .trailing,
+                        spacing: 8
+                    ) {
+                        mapOptionsButton
+                        
+                        if showsWeatherGovAPIActivity {
+                            WeatherGovAPIActivityBadge(snapshot: weatherGovAPIActivitySnapshot)
+                                .transition(
+                                    .opacity
+                                        .combined(
+                                            with: .move(
+                                                edge: .top
+                                            )
+                                        )
+                                )
+                        }
+                    }
+                    .padding(12)
+                    .animation(
+                        .easeInOut(duration: 0.18),
+                        value: showsWeatherGovAPIActivity
+                    )
                 }
             
                 /// This diagnostic means center is the latitude & longitude at the middle of the screen.
@@ -955,6 +1447,14 @@ struct ClimateAtlasView: View {
                     )
                     .padding(12)
                     .allowsHitTesting(false)
+                }
+                .overlay(alignment: .topLeading) {
+                    if searchQuery.isEmpty == false,
+                       searchResults.isEmpty == false || isSearchingAtlas == false {
+                        searchResultsDropdown
+                            .padding(.top, 8)
+                            .padding(.leading, 12)
+                    }
                 }
             /// Map reclaims timeline's reserved vertical space. The timeline floats over the bottom of the map.
             /// 
@@ -1002,6 +1502,30 @@ struct ClimateAtlasView: View {
                 }
             }
         }
+        /// Polls only the actor's RAM state. Does not touch weather.gov
+        .task(
+            id: showsWeatherGovAPIActivity
+        ) {
+            guard showsWeatherGovAPIActivity else {
+                return
+            }
+            
+            let clock = ContinuousClock()
+            
+            while !Task.isCancelled {
+                weatherGovAPIActivitySnapshot = await WeatherGovAPIActivityMeter
+                    .shared
+                    .snapshot()
+                
+                do {
+                    try await clock.sleep(
+                        for: .seconds(1)
+                    )
+                } catch {
+                    return
+                }
+            }
+        }
         
         .onChange(
             of: selectedAppSection
@@ -1013,6 +1537,28 @@ struct ClimateAtlasView: View {
             Task {
                 await loadObservationSnapshot()
             }
+        }
+        
+        .onChange(
+            of: displayedMetric
+        ) { _, newMetric in
+            guard weatherLayer == .observations else {
+                return
+            }
+            
+            switch newMetric {
+            case .rolling24HourMaximum, .rolling24HourMinimum:
+                
+                Task {
+                    await loadVisibleTemperatureHistory()
+                    
+                    await loadVisibleWeatherGovTemperatureHistory()
+                }
+                
+            case .temperature, .dewPoint:
+                break
+            }
+            
         }
     }
     
@@ -1046,13 +1592,28 @@ struct ClimateAtlasView: View {
                 ) { _, newScope in
                     selectedObservationID = nil
                     
-                    showSnapshotObservations(
-                        from: observationSnapshot,
-                        in: visibleBounds,
-                        scope: newScope
-                    )
-                    
-                    Task { await loadVisibleTemperatureHistory() }
+                    switch newScope {
+                    case .primary:
+                        showSnapshotObservations(
+                            from: observationSnapshot,
+                            in: visibleBounds,
+                            scope: .primary
+                        )
+                        
+                        Task {
+                            await loadVisibleTemperatureHistory()
+                        }
+                    case .allNetworks:
+                        showSnapshotObservations(
+                            from: allNetworksObservationSnapshot ?? observationSnapshot,
+                            in: visibleBounds,
+                            scope: .allNetworks
+                        )
+                        
+                        Task {
+                            await loadAllNetworksObservationSnapshot()
+                        }
+                    }
                 }
             }
             
@@ -1083,6 +1644,11 @@ struct ClimateAtlasView: View {
                         
                     case .forecast:
                         displayedMetric = .temperature
+                        
+                        if showsMaximumStationDensity {
+                            showsMaximumStationDensity = false
+                            redisplayCurrentObservationSnapshot()
+                        }
                         
                         Task {
                             await loadVisibleForecastSnapshot()
@@ -1134,7 +1700,8 @@ struct ClimateAtlasView: View {
             AtlasMapOptionsView(
                 displayedMetric: $displayedMetric,
                 annotationSize: $annotationSize,
-                showsSolarIllumination: $showsSolarIllumination
+                showsSolarIllumination: $showsSolarIllumination,
+                showsWeatherGovAPIActivity: $showsWeatherGovAPIActivity
             )
         }
     }
@@ -1185,13 +1752,7 @@ struct ClimateAtlasView: View {
                 .stroke(DashboardTheme.border, lineWidth: 1)
                 .allowsHitTesting(false)
         }
-        .overlay(alignment: .top) {
-            if searchQuery.isEmpty == false,
-               searchResults.isEmpty == false || isSearchingAtlas == false {
-                searchResultsDropdown
-                    .offset(y: 40)
-            }
-        }
+        
         .task(id: searchQuery) {
             try? await Task.sleep(for: .milliseconds(300))
             
@@ -1307,9 +1868,14 @@ struct ClimateAtlasView: View {
     fileprivate var displayedSnapshotTimestamp: Date? {
         switch weatherLayer {
         case .observations:
-            observationSnapshot?.downloadedAt
+            if stationScope == .allNetworks {
+                return allNetworksObservationSnapshot?.downloadedAt
+                ?? observationSnapshot?.downloadedAt
+            }
+            
+            return observationSnapshot?.downloadedAt
         case .forecast:
-            forecastSnapshot?.loadedAt
+            return forecastSnapshot?.loadedAt
         }
     }
     
@@ -1335,12 +1901,115 @@ struct ClimateAtlasView: View {
         }
     }
     
+    fileprivate var showAllStationsAction: some View {
+        Button {
+            showsMaximumStationDensity.toggle()
+            redisplayCurrentObservationSnapshot()
+            
+            Task {
+                await loadVisibleWeatherGovTemperatureHistory()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(
+                    systemName:
+                        showsMaximumStationDensity
+                        ? "checkmark.circle.fill"
+                        : "square.grid.3x3.fill"
+                )
+                .symbolRenderingMode(.monochrome)
+                .font(
+                    .system(
+                        size: 13,
+                        weight: .semibold
+                    )
+                )
+                .foregroundStyle(
+                    DashboardTheme.forecastTemperature
+                )
+
+                Text("Show All Stations")
+                    .font(
+                        .subheadline
+                            .weight(.semibold)
+                    )
+                    .foregroundStyle(
+                        DashboardTheme.textPrimary
+                    )
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(
+            width: 210,
+            height: 32
+        )
+        .background {
+            RoundedRectangle(
+                cornerRadius: 8,
+                style: .continuous
+            )
+            .fill(
+                showsMaximumStationDensity
+                ? DashboardTheme
+                    .forecastTemperature
+                    .opacity(0.20)
+                : DashboardTheme
+                    .panelElevated
+                    .opacity(0.88)
+            )
+        }
+        .overlay {
+            RoundedRectangle(
+                cornerRadius: 8,
+                style: .continuous
+            )
+            .stroke(
+                showsMaximumStationDensity
+                ? DashboardTheme
+                    .forecastTemperature
+                    .opacity(0.75)
+                : DashboardTheme.border,
+                lineWidth: 1
+            )
+            .allowsHitTesting(false)
+        }
+        .contentShape(
+            RoundedRectangle(
+                cornerRadius: 8,
+                style: .continuous
+            )
+        )
+        .help(
+            showsMaximumStationDensity
+            ? "Return to automatic station density"
+            : "Show every loaded station. API request safeguards remain active."
+        )
+        .disabled(
+            weatherLayer == .forecast
+        )
+        .opacity(
+            weatherLayer == .forecast
+            ? 0.48
+            : 1
+        )
+    }
+    
     fileprivate var refreshAction: some View {
         Button {
             Task {
                 switch weatherLayer {
                 case .observations:
-                    await loadObservationSnapshot(forceRefresh: true)
+                    switch stationScope {
+                    case .primary:
+                        await loadObservationSnapshot(forceRefresh: true)
+                    case .allNetworks:
+                        await loadAllNetworksObservationSnapshot(forceRefresh: true)
+                    }
                 case .forecast:
                     await loadVisibleForecastSnapshot(forceRefresh: true)
                 }
@@ -1413,7 +2082,13 @@ struct ClimateAtlasView: View {
             ? "Refresh visible forecasts"
             : "Refresh live stations observations"
         )
-        .disabled(stationScope != .primary ||
-                  (weatherLayer == .forecast ? isLoadingForecastSnapshot : isLoadingObservations))
+        .disabled(
+            weatherLayer == .forecast
+            ? ( stationScope != .primary || isLoadingForecastSnapshot )
+            : ( stationScope == .primary
+                    ? isLoadingObservations
+                    : isLoadingAllNetworksObservations
+            )
+        )
     }
 }

@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Map movement will filter this collection locally instead
 /// of issuing another network request.
-struct AtlasObservationSnapshot: Sendable {
+nonisolated struct AtlasObservationSnapshot: Sendable {
     let observations: [AtlasObservation]
     let downloadedAt: Date
     let rawReportCount: Int

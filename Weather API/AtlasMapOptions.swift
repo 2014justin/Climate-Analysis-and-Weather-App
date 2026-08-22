@@ -15,7 +15,7 @@ nonisolated enum AtlasWeatherLayer: String, CaseIterable, Identifiable, Hashable
     var id: Self { self }
 }
 
-enum AtlasMapMetric: String, CaseIterable, Identifiable, Hashable {
+nonisolated enum AtlasMapMetric: String, CaseIterable, Identifiable, Hashable, Sendable {
     case temperature = "Temperature"
     case dewPoint = "Dew Point"
     case rolling24HourMaximum = "24h Daily Maximum"
@@ -43,7 +43,7 @@ enum AtlasMapMetric: String, CaseIterable, Identifiable, Hashable {
 }
 
 /// The visual size of each station annotation.
-enum AtlasAnnotationSize: String, CaseIterable, Identifiable, Hashable {
+nonisolated enum AtlasAnnotationSize: String, CaseIterable, Identifiable, Hashable, Sendable {
     case medium = "Medium"
     case mediumPlus = "Medium +"
     case large = "Large"
@@ -68,6 +68,7 @@ struct AtlasMapOptionsView: View {
     @Binding var displayedMetric: AtlasMapMetric
     @Binding var annotationSize: AtlasAnnotationSize
     @Binding var showsSolarIllumination: Bool
+    @Binding var showsWeatherGovAPIActivity: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -114,6 +115,30 @@ struct AtlasMapOptionsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
+            
+            Toggle(
+                isOn: $showsWeatherGovAPIActivity
+            ) {
+                VStack(
+                    alignment: .leading,
+                    spacing: 3
+                ) {
+                    Label(
+                        "Show API Activity",
+                        systemImage: "network"
+                    )
+                    .font(.subheadline
+                        .weight(.semibold)
+                    )
+                    
+                    Text(
+                        "Display live Weather.gov request diagnostics"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.textSecondary)
+                }
+            }
+            .toggleStyle(.switch)
             
             Divider()
             

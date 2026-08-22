@@ -3,7 +3,7 @@ import Foundation
 /// One station's latest live observation, converted into the units
 /// used by the app. Provider-specific response models remain separate
 
-struct AtlasObservation: Identifiable, Codable, Hashable, Sendable {
+nonisolated struct AtlasObservation: Identifiable, Codable, Hashable, Sendable {
     let station: AtlasStation
     let observedAt: Date
     let temperatureFahrenheit: Double
@@ -19,7 +19,7 @@ struct AtlasObservation: Identifiable, Codable, Hashable, Sendable {
 /// The result of one Atlas observation request.
 /// Lets the UI distinguish between Raw METAR reports downloaded, unique usable stations produced,
 /// and a potentially incomplete response requiring the user to zoom in.
-struct AtlasObservationBatch: Codable, Hashable, Sendable {
+nonisolated struct AtlasObservationBatch: Codable, Hashable, Sendable {
     let observations: [AtlasObservation]
     let rawRecordCount: Int
     

@@ -7,7 +7,7 @@ import Foundation
 ///
 /// This struct bundles cached observations, cached geographic coverage, the freshness interval,
 /// and rules for storing, retrieving, and expiring entries.
-struct AtlasMapBounds: Codable, Hashable, Sendable {
+nonisolated struct AtlasMapBounds: Codable, Hashable, Sendable {
     let north: Double
     let south: Double
     let east: Double
@@ -56,18 +56,44 @@ struct AtlasMapBounds: Codable, Hashable, Sendable {
     ///
     /// A 0.25 fraction adds 25% of the current width and height
     /// to every edge.
-    func padded(by fraction: Double) -> AtlasMapBounds {
-        let safeFraction = max(fraction, 0)
+    func padded(
+        by fraction: Double,
+        maximumDegreesPerEdge:
+            Double = .infinity
+    ) -> AtlasMapBounds {
+
+        let safeFraction =
+            max(fraction, 0)
+
+        let safeMaximum =
+            maximumDegreesPerEdge.isFinite
+                ? max(
+                    maximumDegreesPerEdge,
+                    0
+                )
+                : .infinity
+
         let latitudePadding =
-            (north - south) * safeFraction
+            min(
+                latitudeSpan * safeFraction,
+                safeMaximum
+            )
+
         let longitudePadding =
-            (east - west) * safeFraction
+            min(
+                longitudeSpan * safeFraction,
+                safeMaximum
+            )
 
         return AtlasMapBounds(
-            north: north + latitudePadding,
-            south: south - latitudePadding,
-            east: east + longitudePadding,
-            west: west - longitudePadding
+            north:
+                north + latitudePadding,
+            south:
+                south - latitudePadding,
+            east:
+                east + longitudePadding,
+            west:
+                west - longitudePadding
         )
     }
 

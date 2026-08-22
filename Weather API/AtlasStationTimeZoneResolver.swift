@@ -16,13 +16,10 @@ struct AtlasStationTimeZoneResolver {
                 for: station
             )
             
-        case "CA":
+        default:
             return try await coordinateTimeZone(
                 for: station
             )
-            
-        default:
-            return nil
         }
     }
     

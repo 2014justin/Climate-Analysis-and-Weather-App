@@ -459,7 +459,7 @@ struct AtlasStationCardView: View {
                 Text(
                     canBuildClimateProfile
                         ? "Build Climate Profile"
-                        : "Climate Profile Coming Soon"
+                        : "Build Climate Coming Soon"
                 )
                 .font(.headline)
                 .frame(maxWidth: .infinity)

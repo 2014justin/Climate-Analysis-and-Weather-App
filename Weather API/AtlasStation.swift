@@ -7,7 +7,7 @@
 import Foundation
 
 /// Controls the future map picker: primary stations NWS/FAA and allNetworks for more 'niche' stations.
-enum AtlasStationScope: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
+nonisolated enum AtlasStationScope: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
     case primary = "Aviation Weather"
     case allNetworks = "All Networks"
     
@@ -17,13 +17,13 @@ enum AtlasStationScope: String, CaseIterable, Identifiable, Codable, Hashable, S
 }
 
 /// Classify station as the main NWS stations or the 'side-characters'.
-enum AtlasStationTier: String, Codable, Hashable, Sendable {
+nonisolated enum AtlasStationTier: String, Codable, Hashable, Sendable {
     case primary
     case supplemental
 }
 
 /// Prevents identifier collisions: US/nws can coexist with future canadian stations.
-struct AtlasStationSource: Codable, Hashable, Sendable {
+nonisolated struct AtlasStationSource: Codable, Hashable, Sendable {
     let countryCode: String
     let providerID: String
     let stationID: String
@@ -34,7 +34,7 @@ struct AtlasStationSource: Codable, Hashable, Sendable {
 }
 
 /// Lightweight map meta data. Live obs and climate profiles will remain separate
-struct AtlasStation: Identifiable, Codable, Hashable, Sendable {
+nonisolated struct AtlasStation: Identifiable, Codable, Hashable, Sendable {
     let source: AtlasStationSource
     let name: String
     let latitude: Double

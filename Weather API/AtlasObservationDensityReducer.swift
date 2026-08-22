@@ -1,206 +1,469 @@
 import Foundation
 
-/// 35°+ longitude span = one preferred station in each of 112 cells.
-/// 12–35° = one preferred station in each of 180 cells.
-/// 5–12° = finer 336-cell layout.
-/// Under 5° = every visible station.
-struct AtlasObservationDensityReducer:
+/// Selects a readable, spatially distributed subset of
+/// observations without needing to know whether the map
+/// covers an urban or rural area.
+///
+/// Sparse regions naturally retain nearly every station.
+/// Dense regions are limited by screen-relative spacing.
+nonisolated struct
+AtlasObservationDensityReducer:
     Sendable {
 
     func observations(
         from snapshot: AtlasObservationSnapshot,
         in bounds: AtlasMapBounds,
+        scope: AtlasStationScope,
+        displayedMetric: AtlasMapMetric,
+        annotationSize: AtlasAnnotationSize,
+        showsMaximumDensity:
+            Bool = false,
         allowedCountryCodes:
-            Set<String> = ["US"]
+            Set<String>? = Set(["US"])
     ) -> [AtlasObservation] {
+
         let visibleObservations =
             snapshot.observations.filter {
                 observation in
 
-                allowedCountryCodes.contains(
-                    observation.station
-                        .source.countryCode
-                )
-                && bounds.contains(
-                    latitude:
-                        observation.station.latitude,
-                    longitude:
-                        observation.station.longitude
-                )
+                let countryIsAllowed =
+                    allowedCountryCodes?
+                        .contains(
+                            observation
+                                .station
+                                .source
+                                .countryCode
+                        )
+                    ?? true
+
+                return countryIsAllowed
+                    && bounds.contains(
+                        latitude:
+                            observation.station.latitude,
+                        longitude:
+                            observation.station.longitude
+                    )
             }
 
-        switch bounds.longitudeSpan {
-        case 35...:
-            return gridSelection(
-                from: visibleObservations,
-                in: bounds,
-                columns: 14,
-                rows: 8
-            )
-
-        case 12..<35:
-            return gridSelection(
-                from: visibleObservations,
-                in: bounds,
-                columns: 18,
-                rows: 10
-            )
-
-        case 5..<12:
-            return gridSelection(
-                from: visibleObservations,
-                in: bounds,
-                columns: 24,
-                rows: 14
-            )
-
-        default:
+        guard visibleObservations.isEmpty == false else {
+            return []
+        }
+        
+        if showsMaximumDensity {
             return sortedByPreference(
-                visibleObservations
+                visibleObservations,
+                scope: scope,
+                displayedMetric:
+                    displayedMetric
             )
-        }
-    }
-
-    private func nationalSelection(
-        from observations:
-            [AtlasObservation],
-        stationsPerArea: Int
-    ) -> [AtlasObservation] {
-        let observationsByArea = Dictionary(
-            grouping: observations
-        ) { observation in
-            let station = observation.station
-
-            let areaCode =
-                station.administrativeAreaCode
-                ?? "UNASSIGNED"
-
-            return """
-                \(station.source.countryCode)/\(areaCode)
-                """
+            .sorted {
+                $0.station.id
+                    < $1.station.id
+            }
         }
 
-        return observationsByArea.keys
-            .sorted()
-            .flatMap { areaKey in
-                sortedByPreference(
-                    observationsByArea[
-                        areaKey
-                    ] ?? []
+        let layout =
+            densityLayout(
+                for: annotationSize,
+                scope: scope,
+                bounds: bounds
+            )
+
+        let automaticSelection =
+            spatiallySeparatedSelection(
+                from: visibleObservations,
+                in: bounds,
+                scope: scope,
+                displayedMetric: displayedMetric,
+                columns: layout.columns,
+                rows: layout.rows
+            )
+
+        guard scope == .allNetworks else {
+            return automaticSelection
+        }
+
+        // METAR observations are already available from the
+        // bulk Aviation Weather snapshot. Give them roughly
+        // twice the local visual capacity without changing
+        // the supplemental-network density.
+        let primaryObservations =
+            visibleObservations.filter {
+                $0.station.tier == .primary
+            }
+
+        guard primaryObservations.isEmpty == false else {
+            return automaticSelection
+        }
+
+        let squareRootOfTwo =
+            2.0.squareRoot()
+
+        let denserPrimaryColumns =
+            Int(
+                ceil(
+                    Double(layout.columns)
+                    * squareRootOfTwo
                 )
-                .prefix(stationsPerArea)
+            )
+
+        let denserPrimaryRows =
+            Int(
+                ceil(
+                    Double(layout.rows)
+                    * squareRootOfTwo
+                )
+            )
+
+        let additionalPrimarySelection =
+            spatiallySeparatedSelection(
+                from: primaryObservations,
+                in: bounds,
+                scope: .primary,
+                displayedMetric: displayedMetric,
+                columns: denserPrimaryColumns,
+                rows: denserPrimaryRows
+            )
+
+        var observationsByID:
+            [String: AtlasObservation] = [:]
+
+        for observation in
+            automaticSelection
+            + additionalPrimarySelection {
+
+            observationsByID[
+                observation.id
+            ] = observation
+        }
+
+        return observationsByID
+            .values
+            .sorted {
+                $0.station.id
+                    < $1.station.id
             }
     }
 
-    private func gridSelection(
-        from observations:
-            [AtlasObservation],
+    private func densityLayout(
+        for annotationSize:
+            AtlasAnnotationSize,
+        scope: AtlasStationScope,
+        bounds: AtlasMapBounds
+    ) -> (
+        columns: Int,
+        rows: Int
+    ) {
+        switch scope {
+        case .allNetworks:
+            // Keep the calmer automatic layout already
+            // established through visual testing.
+            switch annotationSize {
+            case .medium:
+                return (
+                    columns: 15,
+                    rows: 10
+                )
+
+            case .mediumPlus:
+                return (
+                    columns: 13,
+                    rows: 9
+                )
+
+            case .large:
+                return (
+                    columns: 11,
+                    rows: 8
+                )
+            }
+
+        case .primary:
+            // METAR is naturally much sparser. Allow
+            // progressively closer stations as the user
+            // moves from continental to regional views.
+            let largestSpan =
+                max(
+                    bounds.latitudeSpan,
+                    bounds.longitudeSpan
+                )
+
+            if largestSpan <= 8 {
+                switch annotationSize {
+                case .medium:
+                    return (
+                        columns: 40,
+                        rows: 25
+                    )
+
+                case .mediumPlus:
+                    return (
+                        columns: 36,
+                        rows: 22
+                    )
+
+                case .large:
+                    return (
+                        columns: 31,
+                        rows: 19
+                    )
+                }
+            }
+
+            if largestSpan <= 20 {
+                switch annotationSize {
+                case .medium:
+                    return (
+                        columns: 24,
+                        rows: 16
+                    )
+
+                case .mediumPlus:
+                    return (
+                        columns: 21,
+                        rows: 14
+                    )
+
+                case .large:
+                    return (
+                        columns: 18,
+                        rows: 12
+                    )
+                }
+            }
+
+            switch annotationSize {
+            case .medium:
+                return (
+                    columns: 17,
+                    rows: 11
+                )
+
+            case .mediumPlus:
+                return (
+                    columns: 15,
+                    rows: 10
+                )
+
+            case .large:
+                return (
+                    columns: 13,
+                    rows: 9
+                )
+            }
+        }
+    }
+
+    private func spatiallySeparatedSelection(
+        from observations: [AtlasObservation],
         in bounds: AtlasMapBounds,
+        scope: AtlasStationScope,
+        displayedMetric: AtlasMapMetric,
         columns: Int,
         rows: Int
     ) -> [AtlasObservation] {
+
         guard bounds.latitudeSpan > 0,
-              bounds.longitudeSpan > 0 else {
+              bounds.longitudeSpan > 0,
+              columns > 0,
+              rows > 0 else {
             return []
         }
 
-        var selectedByCell:
-            [GridCell: AtlasObservation] = [:]
+        let minimumHorizontalSeparation =
+            1.0 / Double(columns)
 
-        for observation in
-            sortedByPreference(observations) {
+        let minimumVerticalSeparation =
+            1.0 / Double(rows)
 
-            let longitudeOffset =
+        let maximumCount =
+            columns * rows
+
+        var selected:
+            [PositionedObservation] = []
+
+        let rankedObservations =
+            sortedByPreference(
+                observations,
+                scope: scope,
+                displayedMetric:
+                    displayedMetric
+            )
+
+        for observation in rankedObservations {
+            let horizontalPosition =
                 eastwardDegrees(
                     from: bounds.west,
                     to:
-                        observation.station
+                        observation
+                            .station
                             .longitude
                 )
-
-            let horizontalFraction =
-                longitudeOffset
                 / bounds.longitudeSpan
 
-            let verticalFraction =
+            let verticalPosition =
                 (
                     bounds.north
                     - observation.station.latitude
                 )
                 / bounds.latitudeSpan
 
-            let column = min(
-                max(
-                    Int(
-                        horizontalFraction
-                        * Double(columns)
-                    ),
-                    0
-                ),
-                columns - 1
+            let overlapsExistingObservation =
+                selected.contains {
+                    selectedObservation in
+
+                    abs(
+                        selectedObservation
+                            .horizontalPosition
+                        - horizontalPosition
+                    )
+                    < minimumHorizontalSeparation
+
+                    && abs(
+                        selectedObservation
+                            .verticalPosition
+                        - verticalPosition
+                    )
+                    < minimumVerticalSeparation
+                }
+
+            guard overlapsExistingObservation == false else {
+                continue
+            }
+
+            selected.append(
+                PositionedObservation(
+                    observation: observation,
+                    horizontalPosition:
+                        horizontalPosition,
+                    verticalPosition:
+                        verticalPosition
+                )
             )
 
-            let row = min(
-                max(
-                    Int(
-                        verticalFraction
-                        * Double(rows)
-                    ),
-                    0
-                ),
-                rows - 1
-            )
-
-            let cell = GridCell(
-                column: column,
-                row: row
-            )
-
-            if selectedByCell[cell] == nil {
-                selectedByCell[cell] =
-                    observation
+            if selected.count >= maximumCount {
+                break
             }
         }
 
-        return selectedByCell.values.sorted {
-            $0.station.source.stationID
-                < $1.station.source.stationID
-        }
+        return selected
+            .map {
+                $0.observation
+            }
+            .sorted {
+                $0.station.id
+                    < $1.station.id
+            }
     }
 
     private func sortedByPreference(
-        _ observations:
-            [AtlasObservation]
+        _ observations: [AtlasObservation],
+        scope: AtlasStationScope,
+        displayedMetric: AtlasMapMetric
     ) -> [AtlasObservation] {
-        observations.sorted { first, second in
-            let firstPriority =
-                first.station.displayPriority
-                ?? Int.max
 
-            let secondPriority =
-                second.station.displayPriority
-                ?? Int.max
+        observations.sorted {
+            first,
+            second in
 
-            if firstPriority != secondPriority {
-                return firstPriority
-                    < secondPriority
+            let firstHasDisplayedMetric =
+                hasDisplayedMetric(
+                    first,
+                    displayedMetric:
+                        displayedMetric
+                )
+
+            let secondHasDisplayedMetric =
+                hasDisplayedMetric(
+                    second,
+                    displayedMetric:
+                        displayedMetric
+                )
+
+            if firstHasDisplayedMetric
+                != secondHasDisplayedMetric {
+                return firstHasDisplayedMetric
             }
 
-            if first.observedAt
-                != second.observedAt {
-                return first.observedAt
-                    > second.observedAt
+            if scope == .primary {
+                let firstPriority =
+                    first.station.displayPriority
+                    ?? Int.max
+
+                let secondPriority =
+                    second.station.displayPriority
+                    ?? Int.max
+
+                if firstPriority != secondPriority {
+                    return firstPriority
+                        < secondPriority
+                }
             }
 
-            return first.station.source.stationID
-                < second.station.source.stationID
+            let firstFreshnessBucket =
+                freshnessBucket(
+                    for: first.observedAt
+                )
+
+            let secondFreshnessBucket =
+                freshnessBucket(
+                    for: second.observedAt
+                )
+
+            if firstFreshnessBucket
+                != secondFreshnessBucket {
+                return firstFreshnessBucket
+                    > secondFreshnessBucket
+            }
+
+            if scope == .allNetworks,
+               first.station.tier
+                != second.station.tier {
+                return first.station.tier
+                    == .primary
+            }
+
+            return first.station.id
+                < second.station.id
         }
+    }
+
+    private func hasDisplayedMetric(
+        _ observation: AtlasObservation,
+        displayedMetric: AtlasMapMetric
+    ) -> Bool {
+
+        switch displayedMetric {
+        case .temperature:
+            return true
+
+        case .dewPoint:
+            return observation
+                .dewPointFahrenheit != nil
+
+        case .rolling24HourMaximum,
+             .rolling24HourMinimum:
+            // Rolling extrema live in a separate store,
+            // so this reducer cannot inspect them yet.
+            return true
+        }
+    }
+
+    private func freshnessBucket(
+        for date: Date
+    ) -> Int {
+
+        Int(
+            date.timeIntervalSince1970
+            / (10 * 60)
+        )
     }
 
     private func eastwardDegrees(
         from westernLongitude: Double,
         to longitude: Double
     ) -> Double {
+
         let normalizedWest =
             normalized(westernLongitude)
 
@@ -219,8 +482,9 @@ struct AtlasObservationDensityReducer:
     private func normalized(
         _ longitude: Double
     ) -> Double {
-        var result = longitude
-            .truncatingRemainder(
+
+        var result =
+            longitude.truncatingRemainder(
                 dividingBy: 360
             )
 
@@ -233,8 +497,17 @@ struct AtlasObservationDensityReducer:
         return result
     }
 
-    private struct GridCell: Hashable {
-        let column: Int
-        let row: Int
+    private struct
+    PositionedObservation:
+        Sendable {
+
+        let observation:
+            AtlasObservation
+
+        let horizontalPosition:
+            Double
+
+        let verticalPosition:
+            Double
     }
 }
